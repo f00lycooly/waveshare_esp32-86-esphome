@@ -1,0 +1,96 @@
+# ============================================================================
+#  USER CONFIG — edit this file to match your Home Assistant
+# ============================================================================
+#
+# This is the ONE file most people need to touch. Every value here is an
+# ESPHome `substitution`: a name on the left, your value on the right. They are
+# text-substituted as `${name}` throughout the rest of the config (entity IDs,
+# URLs, labels), so you point the panel at your own entities WITHOUT editing the
+# page/module files.
+#
+# Two ways to adopt:
+#   A) Easiest — keep the generic entity names below and create matching
+#      template sensors in Home Assistant (the homeassistant/ folder in this
+#      repo gives you ready-made ones for a Sigenergy + Sonos + Spotify setup;
+#      adapt their INPUTS to your integrations).
+#   B) Direct — change the values below to your real entity IDs and skip the
+#      HA template sensors entirely.
+#
+# Anything you leave at its default simply expects an entity of that name to
+# exist in HA. A page whose entities don't exist just shows "unavailable"; it
+# won't break the rest of the panel. See docs/CONFIGURATION.md for the full map.
+# ============================================================================
+
+substitutions:
+
+  # ---- Device identity ----------------------------------------------------
+  name: "waveshare-p4-86-panel"          # ESPHome node name (lowercase, hyphens)
+  friendly_name: "Waveshare P4 86-Panel" # Display name in Home Assistant
+  esphome_project_name: "foolycooly.waveshare-p4-86-panel"
+  esphome_project_version: "1.0.0"
+  wifi_fallback_pwd: "changeme123"       # Hotspot password if WiFi fails. CHANGE ME.
+
+  # ---- Network ------------------------------------------------------------
+  # Base URL of your Home Assistant. Used by the voice assistant and to fetch
+  # media album art. Prefer a stable hostname or static IP.
+  ha_base_url: "http://homeassistant.local:8123"
+
+  # ---- Localisation -------------------------------------------------------
+  location_name: "Home"                  # Room/location label shown on the screensaver
+
+  # ---- Energy (Energy page + battery ring on the home page) ---------------
+  # Live power, in the sign convention: PV/consumption positive.
+  solar_power_entity:        "sensor.pv_power"
+  home_consumption_entity:   "sensor.home_power"
+  battery_power_entity:      "sensor.battery_power"        # +charging / -discharging
+  battery_soc_entity:        "sensor.battery_soc"          # battery %, 0-100
+  # Daily energy-flow totals (kWh today) feeding the Sankey-style flow diagram.
+  daily_flow_pv_home_entity:        "sensor.daily_flow_pv_home"
+  daily_flow_pv_battery_entity:     "sensor.daily_flow_pv_battery"
+  daily_flow_pv_grid_entity:        "sensor.daily_flow_pv_grid"
+  daily_flow_battery_home_entity:   "sensor.daily_flow_battery_home"
+  daily_flow_battery_grid_entity:   "sensor.daily_flow_battery_grid"
+  daily_flow_grid_home_entity:      "sensor.daily_flow_grid_home"
+  daily_flow_grid_battery_entity:   "sensor.daily_flow_grid_battery"
+
+  # ---- Climate / heat-pump (Climate page) ---------------------------------
+  climate_entity:            "climate.home_heating"         # the thermostat to control
+  zone_current_temp_entity:  "sensor.zone_temperature"
+  zone_humidity_entity:      "sensor.zone_humidity"
+  outdoor_temp_entity:       "sensor.outdoor_temperature"
+  heating_flow_temp_entity:  "sensor.heating_flow_temperature"
+  hot_water_temp_entity:     "sensor.hot_water_temperature"
+
+  # ---- Lights (Lights page — 3 controllable + the panel's own backlight) --
+  light_sofa_entity:             "light.living_room_lamp_1"
+  light_hobby_entity:            "light.living_room_lamp_2"
+  light_cabinet_entity:          "light.cabinet"
+  # The panel exposes its own LCD backlight to HA as light.<node_name>_lcd_backlight.
+  # Default below matches the default `name` above (hyphens become underscores).
+  light_panel_backlight_entity:  "light.waveshare_p4_86_panel_lcd_backlight"
+
+  # ---- Media (Media page — Sonos rooms + active player + Spotify) ----------
+  # The 7 zones shown in the room picker. Rename/remove to match your speakers.
+  sonos_living_room_entity:  "media_player.living_room"
+  sonos_kitchen_entity:      "media_player.kitchen"
+  sonos_kitchen_2_entity:    "media_player.kitchen_2"
+  sonos_office_entity:       "media_player.office"
+  sonos_bedroom_entity:      "media_player.bedroom"
+  sonos_garage_entity:       "media_player.garage"
+  sonos_roam_entity:         "media_player.roam"
+  # Primary zone (suffix only — used by the voice assistant for timer/wake sounds)
+  external_media_player:     "living_room"
+  # HA helpers the media page relies on (created by homeassistant/ templates)
+  active_player_selector_entity: "input_text.active_player"
+  active_media_mirror_entity:    "sensor.active_media"
+  sonos_topology_entity:         "sensor.sonos_topology"
+  spotify_playlists_entity:      "sensor.spotify_playlists"
+  spotify_media_player_entity:   "media_player.spotify"
+
+  # ---- Security (Security page) -------------------------------------------
+  alarm_entity:              "alarm_control_panel.alarm"
+
+  # ---- Weather (screensaver forecast) -------------------------------------
+  # The panel reads this normalised sensor; homeassistant/frontroom_weather.yaml
+  # produces it from your weather.* entity.
+  weather_forecast_entity:   "sensor.weather_forecast"

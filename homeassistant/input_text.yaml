@@ -1,0 +1,10 @@
+# Panel helpers
+# PRODUCES: input_text.active_player — holds the entity_id of the media_player the
+# panel's primary card currently targets. The panel writes this on a device-tile tap
+# (input_text.set_value) and reads it back to drive the now-playing mirror
+# (sensor.active_media, see frontroom_panel.yaml).
+active_player:
+  name: Active Player
+  initial: media_player.living_room   # CHANGE: a sensible default media_player
+  max: 80
+  icon: mdi:speaker

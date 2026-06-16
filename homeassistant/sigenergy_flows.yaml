@@ -1,0 +1,119 @@
+# Instantaneous energy-flow path power (W), inferred from the live inverter node
+# powers using the standard self-consumption allocation:
+#   PV   serves load first, then charges the battery, then exports.
+#   Load shortfall is met by battery discharge, then grid import.
+# The allocation is INSTANTANEOUS — all inputs are simultaneous, so the split is
+# exact (unlike decomposing a day's net totals after the fact).
+#
+# PRODUCES (W): sensor.flow_pv_home, flow_pv_battery, flow_pv_grid,
+#   flow_battery_home, flow_battery_grid, flow_grid_home, flow_grid_battery.
+# These feed the Riemann integrations + daily utility_meters (see
+# sigenergy_flow_integrations.yaml and sigenergy_flow_meters.yaml), which give the
+# panel energy Sankey its measured daily flow splits.
+#
+# INPUTS — retarget these source sensors to your own inverter (every occurrence
+# below is marked "# CHANGE" inline):
+#   sensor.pv_power       — PV generation (kW)
+#   sensor.home_power     — house consumption (kW)
+#   sensor.battery_power  — battery power, + = charge / - = discharge (kW)
+# Seven paths: pv->{home,battery,grid}, battery->{home,grid}, grid->{home,battery}.
+
+- sensor:
+    - name: "Flow PV to Home"
+      unique_id: flow_pv_home
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set pv = [states('sensor.pv_power')|float(0),0]|max %}
+        {% set load = [states('sensor.home_power')|float(0),0]|max %}
+        {% set pv_load = [pv, load]|min %}
+        {{ (pv_load * 1000)|round(1) }}
+
+    - name: "Flow PV to Battery"
+      unique_id: flow_pv_battery
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set pv = [states('sensor.pv_power')|float(0),0]|max %}
+        {% set load = [states('sensor.home_power')|float(0),0]|max %}
+        {% set b = states('sensor.battery_power')|float(0) %}
+        {% set charge = [b, 0]|max %}
+        {% set pv_load = [pv, load]|min %}
+        {% set pv_bat = [pv - pv_load, charge]|min %}
+        {{ ([pv_bat, 0]|max * 1000)|round(1) }}
+
+    - name: "Flow PV to Grid"
+      unique_id: flow_pv_grid
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set pv = [states('sensor.pv_power')|float(0),0]|max %}
+        {% set load = [states('sensor.home_power')|float(0),0]|max %}
+        {% set b = states('sensor.battery_power')|float(0) %}
+        {% set charge = [b, 0]|max %}
+        {% set pv_load = [pv, load]|min %}
+        {% set pv_bat = [pv - pv_load, charge]|min %}
+        {% set pv_grid = pv - pv_load - pv_bat %}
+        {{ ([pv_grid, 0]|max * 1000)|round(1) }}
+
+    - name: "Flow Battery to Home"
+      unique_id: flow_battery_home
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set pv = [states('sensor.pv_power')|float(0),0]|max %}
+        {% set load = [states('sensor.home_power')|float(0),0]|max %}
+        {% set b = states('sensor.battery_power')|float(0) %}
+        {% set discharge = [0 - b, 0]|max %}
+        {% set pv_load = [pv, load]|min %}
+        {% set bat_load = [discharge, load - pv_load]|min %}
+        {{ ([bat_load, 0]|max * 1000)|round(1) }}
+
+    - name: "Flow Battery to Grid"
+      unique_id: flow_battery_grid
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set pv = [states('sensor.pv_power')|float(0),0]|max %}
+        {% set load = [states('sensor.home_power')|float(0),0]|max %}
+        {% set b = states('sensor.battery_power')|float(0) %}
+        {% set discharge = [0 - b, 0]|max %}
+        {% set pv_load = [pv, load]|min %}
+        {% set bat_load = [discharge, load - pv_load]|min %}
+        {% set bat_grid = discharge - bat_load %}
+        {{ ([bat_grid, 0]|max * 1000)|round(1) }}
+
+    - name: "Flow Grid to Battery"
+      unique_id: flow_grid_battery
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set pv = [states('sensor.pv_power')|float(0),0]|max %}
+        {% set load = [states('sensor.home_power')|float(0),0]|max %}
+        {% set b = states('sensor.battery_power')|float(0) %}
+        {% set charge = [b, 0]|max %}
+        {% set pv_load = [pv, load]|min %}
+        {% set pv_bat = [pv - pv_load, charge]|min %}
+        {% set grid_bat = charge - pv_bat %}
+        {{ ([grid_bat, 0]|max * 1000)|round(1) }}
+
+    - name: "Flow Grid to Home"
+      unique_id: flow_grid_home
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      state: >
+        {% set pv = [states('sensor.pv_power')|float(0),0]|max %}
+        {% set load = [states('sensor.home_power')|float(0),0]|max %}
+        {% set b = states('sensor.battery_power')|float(0) %}
+        {% set discharge = [0 - b, 0]|max %}
+        {% set pv_load = [pv, load]|min %}
+        {% set bat_load = [discharge, load - pv_load]|min %}
+        {% set grid_load = load - pv_load - bat_load %}
+        {{ ([grid_load, 0]|max * 1000)|round(1) }}

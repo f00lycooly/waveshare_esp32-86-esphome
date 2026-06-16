@@ -1,0 +1,313 @@
+# page-energy.yaml — Energy page package for the frontroom panel.
+# Included as a package by frontroom-panel-modular.yaml.
+#
+# Owns: the energy_page LVGL page — an interactive Sankey energy-flow diagram
+# (HomeAutomation-4eq.18) rendered on the shipped LVGL 9.5 `canvas` widget — NO
+# ThorVG/vector-graphics build flags (unavailable in ESPHome 2026.5.x until
+# upstream PR #16865). Flow ribbons are filled bands between two cubic béziers
+# (lv_draw_triangle on a canvas layer); node blocks via lv_draw_rect.
+# Ported from reference/sankey-energy-flow.gemini.yaml.
+#
+# This REPLACES the former battery-arc + Octopus-tariff energy screen AND the old
+# energy-flow idle screensaver: on_idle (ui-shared.yaml) now shows energy_page, so
+# the Sankey is both the Energy screen and the screensaver. Keeps the page id
+# `energy_page` so the main-grid Energy tile + swipe carousel keep working.
+#
+# Two views via the header toggle (default Today):
+#   Today — measured daily flow splits (kWh) from the HA path sensors
+#           (sensor.daily_flow_*); see homeassistant/sigenergy_flow_*.yaml.
+#   Now   — live power (kW); the split is computed on-device from the live node
+#           powers (pv_kw/home_kw declared below, batt_kw in ui-shared.yaml; grid
+#           is a residual). batt_kw is +charge/-discharge.
+#
+# Swipe vs touch: kept in the swipe carousel (like the other feature pages), so
+# the canvas is clickable:false and the labels non-clickable — swipe gestures
+# pass through to the page. (No per-node tap hit-boxes: full-height edge buttons
+# would fight edge-initiated horizontal swipes.)
+
+globals:
+  # True only while the energy page is loaded — gates the redraw interval.
+  - id: sankey_active
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  # View mode: 0 = Now (live power, kW), 1 = Today (daily energy totals, kWh).
+  - id: sankey_mode
+    type: int
+    restore_value: false
+    initial_value: "1"
+
+# ───── Daily flow-path totals (kWh) — drive the "Today" view ─────
+# Sigenergy exposes only node totals, not inter-node flows, so the seven paths are
+# computed instantaneously in HA (where the split is exact) and integrated to daily
+# meters: templates/sigenergy_flows.yaml → sigenergy_flow_integrations.yaml →
+# sigenergy_flow_meters.yaml. The panel reads the daily meters directly — no
+# panel-side allocation in Today mode. Read via id(<sensor>).state; interval redraws.
+sensor:
+  - platform: homeassistant
+    id: df_pvh
+    entity_id: ${daily_flow_pv_home_entity}
+    internal: true
+  - platform: homeassistant
+    id: df_pvb
+    entity_id: ${daily_flow_pv_battery_entity}
+    internal: true
+  - platform: homeassistant
+    id: df_pvg
+    entity_id: ${daily_flow_pv_grid_entity}
+    internal: true
+  - platform: homeassistant
+    id: df_bh
+    entity_id: ${daily_flow_battery_home_entity}
+    internal: true
+  - platform: homeassistant
+    id: df_bg
+    entity_id: ${daily_flow_battery_grid_entity}
+    internal: true
+  - platform: homeassistant
+    id: df_gh
+    entity_id: ${daily_flow_grid_home_entity}
+    internal: true
+  - platform: homeassistant
+    id: df_gb
+    entity_id: ${daily_flow_grid_battery_entity}
+    internal: true
+  # Live node powers for the "Now" view (relocated from the removed idle page).
+  # batt_kw lives in ui-shared.yaml; grid is derived as a residual, so no grid sensor.
+  - platform: homeassistant
+    id: pv_kw
+    entity_id: ${solar_power_entity}
+    internal: true
+  - platform: homeassistant
+    id: home_kw
+    entity_id: ${home_consumption_entity}
+    internal: true
+
+script:
+  # Full Sankey repaint: gather inputs by mode → allocate flows → draw ribbons +
+  # node blocks onto the canvas layer → refresh the per-node value labels.
+  - id: refresh_sankey
+    then:
+      - lambda: |-
+          // ── seven flow paths + six node totals, by mode ──
+          // Today: measured daily splits straight from HA (instantaneous split is
+          //        computed + integrated server-side — no panel allocation).
+          // Now:   instantaneous split from the live node powers; all values are
+          //        simultaneous so the standard PV→load→battery→grid split is exact.
+          float pv_load, pv_bat, pv_grid, bat_load, bat_grid, grid_load, grid_bat;
+          const char *unit;
+          if (id(sankey_mode) == 1) {
+            unit = "kWh";
+            pv_load   = isnan(id(df_pvh).state) ? 0.0f : id(df_pvh).state;
+            pv_bat    = isnan(id(df_pvb).state) ? 0.0f : id(df_pvb).state;
+            pv_grid   = isnan(id(df_pvg).state) ? 0.0f : id(df_pvg).state;
+            bat_load  = isnan(id(df_bh).state)  ? 0.0f : id(df_bh).state;
+            bat_grid  = isnan(id(df_bg).state)  ? 0.0f : id(df_bg).state;
+            grid_load = isnan(id(df_gh).state)  ? 0.0f : id(df_gh).state;
+            grid_bat  = isnan(id(df_gb).state)  ? 0.0f : id(df_gb).state;
+          } else {
+            unit = "kW";
+            float pv   = fmaxf(isnan(id(pv_kw).state)   ? 0.0f : id(pv_kw).state,   0.0f);
+            float load = fmaxf(isnan(id(home_kw).state) ? 0.0f : id(home_kw).state, 0.0f);
+            float bat  = isnan(id(batt_kw).state) ? 0.0f : id(batt_kw).state;   // +chg / -dis
+            float charge = fmaxf(bat, 0.0f), discharge = fmaxf(-bat, 0.0f);
+            pv_load   = fminf(pv, load);
+            pv_bat    = fminf(pv - pv_load, charge);
+            pv_grid   = fmaxf(pv - pv_load - pv_bat, 0.0f);
+            bat_load  = fminf(discharge, load - pv_load);
+            bat_grid  = fmaxf(discharge - bat_load, 0.0f);
+            grid_bat  = fmaxf(charge - pv_bat, 0.0f);
+            grid_load = fmaxf(load - pv_load - bat_load, 0.0f);
+          }
+
+          // node totals = sums of their paths (== the measured node totals)
+          float n_solar  = pv_load + pv_bat + pv_grid;
+          float n_batdis = bat_load + bat_grid;
+          float n_gimp   = grid_load + grid_bat;
+          float n_batchg = pv_bat + grid_bat;
+          float n_home   = pv_load + bat_load + grid_load;
+          float n_gexp   = pv_grid + bat_grid;
+
+          // ── geometry (canvas-local coords; canvas is 720×644 at screen y=70) ──
+          // Each side is normalised to its OWN total and stacked to fill the full
+          // body height: node height = (value / sideTotal) × H_BODIES. The two
+          // totals match by energy balance, so ribbon ends line up on both sides.
+          const float X0 = 130, X3 = 590, XC = 360;          // ribbon start / end / control x
+          const float BLK_W = 50, BLK_LX = 80, BLK_RX = 590;  // block width + left/right x
+          const float T = 20, GAP = 16;                       // top margin + inter-node gap
+          const float H_BODIES = 644.0f - 2*T - 2*GAP;        // total stackable node height
+          float leftTotal  = fmaxf(n_solar + n_batdis + n_gimp, 0.1f);
+          float rightTotal = fmaxf(n_batchg + n_home + n_gexp, 0.1f);
+          float lsc = H_BODIES / leftTotal;                   // left  px-per-unit
+          float rsc = H_BODIES / rightTotal;                  // right px-per-unit
+
+          float H_ls = n_solar*lsc,  H_lb = n_batdis*lsc, H_lg = n_gimp*lsc;
+          float H_rb = n_batchg*rsc, H_rh = n_home*rsc,   H_rg = n_gexp*rsc;
+
+          // node tops (stack top→bottom with gaps; left: solar/batt/grid)
+          float top_ls = T;
+          float top_lb = top_ls + H_ls + GAP;
+          float top_lg = top_lb + H_lb + GAP;
+          float top_rb = T;                                   // right: batt/home/grid
+          float top_rh = top_rb + H_rb + GAP;
+          float top_rg = top_rh + H_rh + GAP;
+
+          // ribbon stacking cursors start at each node's top and advance per flow
+          float cur_ls = top_ls, cur_lb = top_lb, cur_lg = top_lg;
+          float cur_rb = top_rb, cur_rh = top_rh, cur_rg = top_rg;
+
+          lv_obj_t* cv = id(sankey_canvas);
+          lv_canvas_fill_bg(cv, lv_color_hex(0x0E0F12), LV_OPA_COVER);
+          lv_layer_t layer;
+          lv_canvas_init_layer(cv, &layer);
+
+          // ── ribbon: a FILLED band between two cubic béziers (top + bottom edge),
+          //    tessellated into triangle quads. Source-side width uses the left
+          //    scale, sink-side the right scale, so node edges tile exactly and the
+          //    band tapers smoothly between them. No stroked line → no round caps. ──
+          auto ribbon = [&](float &ys, float &yd, float val, uint32_t color) {
+            if (val <= 0.05f) return;
+            float ws = val*lsc, wd = val*rsc;
+            float yt0 = ys,      yt3 = yd;        // top-edge endpoints
+            float yb0 = ys + ws, yb3 = yd + wd;   // bottom-edge endpoints
+            lv_draw_triangle_dsc_t td; lv_draw_triangle_dsc_init(&td);
+            td.color = lv_color_hex(color); td.opa = LV_OPA_70;
+            const int N = 20;
+            float pxx = X0, ptop = yt0, pbot = yb0;
+            for (int i = 1; i <= N; i++) {
+              float t = (float)i / N, u = 1.0f - t;
+              float bx = u*u*u*X0  + 3*u*u*t*XC  + 3*u*t*t*XC  + t*t*t*X3;
+              float ct = u*u*u*yt0 + 3*u*u*t*yt0 + 3*u*t*t*yt3 + t*t*t*yt3;
+              float cb = u*u*u*yb0 + 3*u*u*t*yb0 + 3*u*t*t*yb3 + t*t*t*yb3;
+              // quad (pxx,ptop)-(bx,ct)-(bx,cb)-(pxx,pbot) as two triangles
+              td.p[0].x = pxx; td.p[0].y = ptop; td.p[1].x = bx; td.p[1].y = ct; td.p[2].x = bx;  td.p[2].y = cb;
+              lv_draw_triangle(&layer, &td);
+              td.p[0].x = pxx; td.p[0].y = ptop; td.p[1].x = bx; td.p[1].y = cb; td.p[2].x = pxx; td.p[2].y = pbot;
+              lv_draw_triangle(&layer, &td);
+              pxx = bx; ptop = ct; pbot = cb;
+            }
+            ys += ws; yd += wd;
+          };
+
+          // draw order defines vertical stacking within each node; ribbons are
+          // coloured by source (PV yellow / battery cyan / grid blue).
+          ribbon(cur_ls, cur_rb, pv_bat,    0xFFE600);  // PV → charge      (yellow)
+          ribbon(cur_ls, cur_rh, pv_load,   0xFFE600);  // PV → home        (yellow)
+          ribbon(cur_ls, cur_rg, pv_grid,   0xFFE600);  // PV → export      (yellow)
+          ribbon(cur_lb, cur_rh, bat_load,  0x00E5FF);  // discharge → home (cyan)
+          ribbon(cur_lb, cur_rg, bat_grid,  0x00E5FF);  // discharge → export (cyan)
+          ribbon(cur_lg, cur_rb, grid_bat,  0x4A70F7);  // import → charge  (blue)
+          ribbon(cur_lg, cur_rh, grid_load, 0x4A70F7);  // import → home    (blue)
+
+          // ── node blocks (drawn over ribbon ends) ──
+          auto block = [&](float x, float top, float h, uint32_t accent) {
+            if (h < 3.0f) h = 3.0f;
+            lv_draw_rect_dsc_t rd; lv_draw_rect_dsc_init(&rd);
+            rd.bg_color = lv_color_hex(0x1A1C20); rd.bg_opa = LV_OPA_COVER;
+            rd.radius = 4; rd.border_width = 2; rd.border_color = lv_color_hex(accent);
+            lv_area_t a;
+            a.x1 = (int32_t)x;          a.y1 = (int32_t)top;
+            a.x2 = (int32_t)(x+BLK_W);  a.y2 = (int32_t)(top + h);
+            lv_draw_rect(&layer, &rd, &a);
+          };
+          block(BLK_LX, top_ls, H_ls, 0xFFE600);   // solar  (yellow)
+          block(BLK_LX, top_lb, H_lb, 0x00E5FF);   // batt discharge (cyan)
+          block(BLK_LX, top_lg, H_lg, 0x4A70F7);   // grid import (blue)
+          block(BLK_RX, top_rb, H_rb, 0x00E5FF);   // batt charge (cyan)
+          block(BLK_RX, top_rh, H_rh, 0xFFFFFF);   // home (white)
+          block(BLK_RX, top_rg, H_rg, 0x8A92A6);   // grid export (grey)
+
+          lv_canvas_finish_layer(cv, &layer);
+
+          // ── node labels: 2-line "TITLE\nvalue unit", centred on each block ──
+          // Canvas sits at screen y=70; labels are page widgets, so add that offset.
+          char b[28];
+          auto setlbl = [&](lv_obj_t* o, int x, float top, float h, const char* title, float val) {
+            snprintf(b, sizeof(b), "%s\n%.1f %s", title, val, unit);
+            lv_label_set_text(o, b);
+            lv_obj_set_pos(o, x, (int)(70.0f + top + h/2.0f - 18.0f));
+          };
+          setlbl(id(lbl_n_solar),  8,   top_ls, H_ls, "SOLAR",  n_solar);
+          setlbl(id(lbl_n_batdis), 8,   top_lb, H_lb, "BATT",   n_batdis);
+          setlbl(id(lbl_n_gimp),   8,   top_lg, H_lg, "GRID",   n_gimp);
+          setlbl(id(lbl_n_batchg), 644, top_rb, H_rb, "BATT",   n_batchg);
+          setlbl(id(lbl_n_home),   644, top_rh, H_rh, "HOME",   n_home);
+          setlbl(id(lbl_n_gexp),   644, top_rg, H_rg, "GRID",   n_gexp);
+
+interval:
+  # Repaint while the page is showing (cheap; a handful of draw ops). Off otherwise.
+  - interval: 1s
+    then:
+      - if:
+          condition:
+            lambda: 'return id(sankey_active);'
+          then:
+            - script.execute: refresh_sankey
+
+lvgl:
+  pages:
+    # ═════════════════════ ENERGY — Sankey flow (4eq.18) ═════════════════════
+    - id: energy_page
+      styles: page_style
+      <<: !include
+        file: ../esphome-modular-lvgl-buttons/common/swipe_navigation.yaml
+      on_load:
+        - lambda: 'id(sankey_active) = true;'
+        - script.execute: refresh_sankey
+      on_unload:
+        - lambda: 'id(sankey_active) = false;'
+      widgets:
+        # Header
+        - button:
+            id: back_energy
+            align: TOP_LEFT
+            x: 8
+            y: 8
+            width: 56
+            height: 56
+            radius: 28
+            bg_color: very_dark_gray
+            widgets:
+              - label: {align: center, text: $mdi_chevron_left, text_font: mdi_card_28, text_color: white}
+            on_click:
+              - lvgl.page.show: main_page
+        - label: {align: TOP_MID, y: 18, text: "Energy", styles: header_title}
+        # Now (live kW) ⇄ Today (daily kWh) view toggle. Defaults to Today.
+        - button:
+            id: sk_mode_toggle
+            align: TOP_RIGHT
+            x: -8
+            y: 8
+            width: 104
+            height: 56
+            radius: 18
+            bg_color: very_dark_gray
+            widgets:
+              - label: {id: lbl_sk_mode, align: center, text: "TODAY", text_font: oswald_18, text_color: white}
+            on_click:
+              - lambda: |-
+                  id(sankey_mode) = id(sankey_mode) ? 0 : 1;
+                  lv_label_set_text(id(lbl_sk_mode), id(sankey_mode) ? "TODAY" : "NOW");
+              - script.execute: refresh_sankey
+
+        # ── Drawing surface (clickable:false so swipes pass through to the page).
+        #    RGB565 → 720×644×2 ≈ 927 KB from PSRAM.
+        - canvas:
+            id: sankey_canvas
+            x: 0
+            y: 70
+            width: 720
+            height: 644
+            clickable: false
+
+        # ── Per-node labels (2-line, centred on each block by refresh_sankey).
+        #    Non-clickable so swipes pass through. Initial x/y are placeholders;
+        #    the script repositions them each refresh to track the dynamic blocks. ──
+        # Left column (sources): Solar / Battery-discharge / Grid-import
+        - label: {id: lbl_n_solar,  clickable: false, align: TOP_LEFT, x: 8,   y: 90,  text: "SOLAR\n0.0 kWh", text_font: oswald_18, text_color: white}
+        - label: {id: lbl_n_batdis, clickable: false, align: TOP_LEFT, x: 8,   y: 300, text: "BATT\n0.0 kWh",  text_font: oswald_18, text_color: white}
+        - label: {id: lbl_n_gimp,   clickable: false, align: TOP_LEFT, x: 8,   y: 510, text: "GRID\n0.0 kWh",  text_font: oswald_18, text_color: white}
+        # Right column (sinks): Battery-charge / Home / Grid-export
+        - label: {id: lbl_n_batchg, clickable: false, align: TOP_LEFT, x: 644, y: 90,  text: "BATT\n0.0 kWh",  text_font: oswald_18, text_color: white}
+        - label: {id: lbl_n_home,   clickable: false, align: TOP_LEFT, x: 644, y: 300, text: "HOME\n0.0 kWh",  text_font: oswald_18, text_color: white}
+        - label: {id: lbl_n_gexp,   clickable: false, align: TOP_LEFT, x: 644, y: 510, text: "GRID\n0.0 kWh",  text_font: oswald_18, text_color: white}

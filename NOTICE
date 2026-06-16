@@ -1,0 +1,41 @@
+This project bundles third-party components. Their licences and attributions
+are listed below. Each retains its own copyright.
+
+--------------------------------------------------------------------------------
+esphome-modular-lvgl-buttons
+  Author:   Andrew Gillis
+  Licence:  MIT (Copyright (c) 2024 Andrew Gillis)
+  Upstream: https://github.com/agillis/esphome-modular-lvgl-buttons
+  Bundled:  esphome/esphome-modular-lvgl-buttons/  (full MIT licence retained
+            in that directory's LICENSE file)
+  Notes:    Vendored so the firmware builds from a single clone. Development-only
+            directories (examples, tests, tooling) were removed; the library's
+            common/, ui/, pages/, hardware/, and assets/ are included unchanged.
+
+--------------------------------------------------------------------------------
+lvgl_screenshot  (esphome/components/lvgl_screenshot/)
+  Derived from: dcgrove/esphome-lvgl-screenshot
+  Changes:      Ported to the LVGL v9 API (lv_display_get_buf_active, raw RGB565
+                buffer reads) so it builds against ESPHome's LVGL 9.5.
+
+--------------------------------------------------------------------------------
+stb_image_write.h  (esphome/components/lvgl_screenshot/)
+  Author:   Sean Barrett and contributors
+  Licence:  Public domain (or MIT) — dual-licensed, see the header file.
+  Upstream: https://github.com/nothings/stb
+
+--------------------------------------------------------------------------------
+Oswald font  (esphome/assets/fonts/Oswald-*.ttf)
+  Licence:  SIL Open Font License 1.1
+  Upstream: https://fonts.google.com/specimen/Oswald
+
+--------------------------------------------------------------------------------
+Material Design Icons webfont  (esphome/assets/fonts/materialdesignicons-webfont.ttf)
+  Licence:  Apache License 2.0
+  Upstream: https://github.com/Templarian/MaterialDesign-Webfont
+
+--------------------------------------------------------------------------------
+microWakeWord models  (esphome/assets/microwakeword/*.tflite, *.json)
+  Licence:  Apache License 2.0
+  Upstream: https://github.com/kahrendt/microWakeWord and the Home Assistant
+            wake-word model collection.

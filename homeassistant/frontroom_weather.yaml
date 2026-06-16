@@ -1,0 +1,50 @@
+# Panel weather forecast glue
+#
+# PRODUCES: sensor.weather_forecast — Today / Tomorrow forecast for the panel's
+# screensaver, republished as compact pipe-encoded attributes.
+# INPUTS: retarget the weather.home references marked "# CHANGE" to your own
+# weather entity (every occurrence below — the platform: state trigger, the
+# service target, the state template, and inside both attribute templates).
+#
+# A weather entity only exposes CURRENT conditions as state + attributes; daily
+# hi/lo come from the weather.get_forecasts SERVICE (response data, not a static
+# attribute). This trigger-template sensor calls it on a schedule (+ HA start +
+# whenever the weather entity updates) and republishes the first two days as:
+#
+#   attribute today    = "<condition>|<hi>|<lo>"   e.g. "cloudy|18|15"
+#   attribute tomorrow = "<condition>|<hi>|<lo>"   e.g. "partlycloudy|20|14"
+#
+# The panel splits on '|' and maps the condition string to an MDI weather glyph
+# (apply_forecast in page-screensaver.yaml). Keeping the mapping on the ESP side
+# means this sensor stays tiny and well under the 255-char attribute cap.
+
+- trigger:
+    - platform: homeassistant
+      event: start
+    - platform: time_pattern
+      minutes: "/30"
+    - platform: state
+      entity_id: weather.home   # CHANGE: your weather entity
+    - platform: event
+      event_type: panel_refresh
+  action:
+    - service: weather.get_forecasts
+      target:
+        entity_id: weather.home   # CHANGE: your weather entity
+      data:
+        type: daily
+      response_variable: fc
+  sensor:
+    - name: "Weather Forecast"
+      unique_id: weather_forecast
+      icon: mdi:weather-partly-cloudy
+      # State = current condition (handy for debugging in Developer Tools).
+      state: "{{ states('weather.home') }}"   # CHANGE: your weather entity
+      attributes:
+        # Single-line expressions only — multi-line Jinja would inject whitespace
+        # into the value and break the panel's condition match.
+        # CHANGE: replace 'weather.home' below with your weather entity (4 places).
+        today: >-
+          {{ (fc['weather.home'].forecast[0].condition ~ '|' ~ (fc['weather.home'].forecast[0].temperature | round(0) | int) ~ '|' ~ (fc['weather.home'].forecast[0].templow | default(fc['weather.home'].forecast[0].temperature) | round(0) | int)) if fc is defined and 'weather.home' in fc and (fc['weather.home'].forecast | count) > 0 else '' }}
+        tomorrow: >-
+          {{ (fc['weather.home'].forecast[1].condition ~ '|' ~ (fc['weather.home'].forecast[1].temperature | round(0) | int) ~ '|' ~ (fc['weather.home'].forecast[1].templow | default(fc['weather.home'].forecast[1].temperature) | round(0) | int)) if fc is defined and 'weather.home' in fc and (fc['weather.home'].forecast | count) > 1 else '' }}

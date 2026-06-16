@@ -1,0 +1,156 @@
+# ───────────────────────────────────────────────────────────────────────────────
+# ui-shared.yaml — Shared UI layer, included as a package by
+# frontroom-panel-modular.yaml (before the page packages, by convention).
+#
+# Owns:
+#   - The three lvgl singleton keys: buffer_size, style_definitions, on_idle.
+#     (No pages: key here — each page package contributes its own page; ESPHome
+#     concatenates the pages lists in package-declaration order.)
+#   - The two multi-page MDI fonts: mdi_card_28 (card subtitles + inline
+#     controls) and mdi_icon_40 (per-entity icons within feature pages).
+#   - The battery power HA sensor batt_kw, read directly (.state) by the energy
+#     Sankey "Now" view. No on_value — the old idle-page labels are gone.
+#
+# Cross-package IDs (resolve after package merge): nunito_* fonts and colour
+# names (library theme packages).
+# ───────────────────────────────────────────────────────────────────────────────
+
+sensor:
+  - platform: homeassistant
+    id: batt_kw   # +charge / -discharge; read by the energy Sankey "Now" view
+    entity_id: sensor.sigen_plant_battery_power
+    internal: true
+
+font:
+  # Small MDI glyphs for card subtitles + inline controls (back chevron, keypad,
+  # media transport, battery direction arrows).
+  - file: 'assets/fonts/materialdesignicons-webfont.ttf'
+    id: mdi_card_28
+    size: 28
+    bpp: 4
+    glyphs:
+      - $mdi_arrow_up_bold      # charging
+      - $mdi_arrow_down_bold    # discharging
+      - $mdi_pause              # idle / no flow
+      - $mdi_chevron_left       # back button
+      - $mdi_plus               # setpoint up / vol
+      - $mdi_minus              # setpoint down / vol
+      - $mdi_backspace          # keypad delete
+      - $mdi_check              # keypad enter
+      - $mdi_close              # modal dismiss
+      - $mdi_play
+      - $mdi_skip_next
+      - $mdi_skip_previous
+      - $mdi_volume_high
+      - $mdi_shuffle            # media shuffle toggle (page-media 4eq.19)
+      - $mdi_repeat             # repeat all (page-media 4eq.19)
+      - $mdi_repeat_off         # repeat off
+      - $mdi_repeat_once        # repeat one
+      - $mdi_crown              # live group coordinator badge (rooms modal 4eq.20)
+      - $mdi_link_variant       # grouped-member badge (rooms modal 4eq.20)
+      # Decorative per-tile glyphs for the Playlists modal grid (4eq.17). Purely
+      # visual variety (paired with per-tile gradients); not data-driven.
+      - $mdi_heart
+      - $mdi_compass
+      - $mdi_guitar_acoustic
+      - $mdi_headphones
+      - $mdi_music_note
+      - $mdi_white_balance_sunny
+      - $mdi_run_fast
+      - $mdi_saxophone
+  # Mid-size card glyphs (per-entity icons within feature pages).
+  - file: 'assets/fonts/materialdesignicons-webfont.ttf'
+    id: mdi_icon_40
+    size: 40
+    bpp: 4
+    glyphs:
+      - $mdi_sofa
+      - $mdi_lightbulb
+      - $mdi_lightbulb_outline
+      - $mdi_led_strip_variant
+      - $mdi_television
+      - $mdi_thermometer
+      - $mdi_water_boiler
+      - $mdi_weather_partly_cloudy
+      - $mdi_water_percent
+      - $mdi_shield_lock
+      - $mdi_shield_off
+      - $mdi_lock
+      - $mdi_lock_open
+      - $mdi_speaker
+      - $mdi_radiator
+      - $mdi_speaker_multiple   # Rooms launch-dock icon (media hub 4eq.21)
+      - $mdi_playlist_music     # Playlists launch-dock icon (media hub 4eq.21)
+      - $mdi_link_variant       # Group action (rooms modal 4eq.20)
+      - $mdi_link_off           # Ungroup action (rooms modal 4eq.20)
+
+  # ───── Oswald — "Terminal" display family (HomeAutomation-4eq.28) ─────
+  # Replaces Nunito as the panel's font across every app page (Home / Energy /
+  # Climate / Media / Screensaver). GF_Latin_Core matches the project's existing
+  # glyph coverage (incl. the ° the climate strip renders). bpp:4 keeps the cost
+  # of running a second family alongside the library's Nunito reasonable. Weights:
+  # SemiBold everywhere, except the tiniest size (14) which is Bold so small dense
+  # captions stay crisp on the P4 (design call: heavier for tiny labels).
+  - {file: 'assets/fonts/Oswald-Bold.ttf',     id: oswald_14, size: 14, bpp: 4, glyphsets: GF_Latin_Core}
+  - {file: 'assets/fonts/Oswald-SemiBold.ttf', id: oswald_18, size: 18, bpp: 4, glyphsets: GF_Latin_Core}
+  - {file: 'assets/fonts/Oswald-SemiBold.ttf', id: oswald_20, size: 20, bpp: 4, glyphsets: GF_Latin_Core}
+  - {file: 'assets/fonts/Oswald-SemiBold.ttf', id: oswald_24, size: 24, bpp: 4, glyphsets: GF_Latin_Core}
+  - {file: 'assets/fonts/Oswald-SemiBold.ttf', id: oswald_36, size: 36, bpp: 4, glyphsets: GF_Latin_Core}
+  - {file: 'assets/fonts/Oswald-SemiBold.ttf', id: oswald_42, size: 42, bpp: 4, glyphsets: GF_Latin_Core}
+  - {file: 'assets/fonts/Oswald-SemiBold.ttf', id: oswald_48, size: 48, bpp: 4, glyphsets: GF_Latin_Core}
+  - {file: 'assets/fonts/Oswald-SemiBold.ttf', id: oswald_72, size: 72, bpp: 4, glyphsets: GF_Latin_Core}
+
+# ───── LVGL UI ─────
+# Stub main_page — tiles get added incrementally per beads HomeAutomation-4eq.* cards.
+# The library's hardware file already sets byte_order + rotation on `lvgl:`,
+# and common/ota.yaml adds a top_layer OTA overlay; this block extends it
+# with the user-facing pages.
+lvgl:
+  buffer_size: 100%
+  # ───── Cohesive theme (HomeAutomation-4eq.9) ─────
+  # Named styles so every card inherits the project's visual language by reference.
+  # Semantic per-state colours (battery SOC, alarm state, tariff) stay in their
+  # driving lambdas; everything structural lives here. Extends the library's
+  # page_style / time_style (from common/theme/theme_style.yaml).
+  style_definitions:
+    # Translucent rounded card container with a thin border.
+    - id: card
+      bg_color: slate_blue_gray
+      bg_opa: 70%
+      radius: 18
+      border_width: 1
+      border_color: gray700
+      pad_all: 14
+    # Home-grid navigation tile.
+    - id: nav_tile
+      bg_color: very_dark_gray
+      bg_opa: cover
+      radius: 20
+      border_width: 0
+      pad_all: 6
+    # Pill-shaped strip element (tariff banner, badges).
+    - id: pill
+      bg_color: very_dark_gray
+      bg_opa: cover
+      radius: 26
+      border_width: 0
+      pad_all: 10
+    # Page header title.
+    - id: header_title
+      text_font: oswald_24
+      text_color: white
+    # Large primary value.
+    - id: value_lg
+      text_font: oswald_48
+      text_color: white
+    # Small caption under a value.
+    - id: caption
+      text_font: oswald_14
+      text_color: gray500
+  # Screensaver (HomeAutomation-4eq.29): after inactivity, drop to the Terminal
+  # clock/weather page. It's a full-screen tap-to-wake button → returns to main_page
+  # on any touch. (The energy Sankey is still reachable via the home battery button.)
+  on_idle:
+    timeout: 45s
+    then:
+      - lvgl.page.show: screensaver_page

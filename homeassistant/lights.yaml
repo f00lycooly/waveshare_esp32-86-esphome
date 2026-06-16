@@ -1,0 +1,144 @@
+# Template lights — wrap plain on/off switches as `light` entities so the panel's
+# light tiles get a uniform domain. INPUTS: every switch.* entity_id below is the
+# adopter's own switch — CHANGE each to match your hardware (and rename the lights
+# to your rooms). These are illustrative examples, not normalized panel outputs.
+- light:
+    - name: "Office Outside Lights"
+      unique_id: tpl_light_office_outside_lights
+      state: "{{ is_state('switch.shelly1minig3_dcda0ce5efe4', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.shelly1minig3_dcda0ce5efe4 }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.shelly1minig3_dcda0ce5efe4 }
+
+    - name: "Office Desk Lights"
+      unique_id: tpl_light_office_desk_lights
+      state: "{{ is_state('switch.officedesklights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.officedesklights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.officedesklights }
+
+    - name: "Office Main Lights"
+      unique_id: tpl_light_office_main_lights
+      state: "{{ is_state('switch.officemainlights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.officemainlights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.officemainlights }
+
+    - name: "Ensuite Lights"
+      unique_id: tpl_light_ensuite_lights
+      state: "{{ is_state('switch.ensuitelights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.ensuitelights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.ensuitelights }
+
+    - name: "Kitchen Main Lights"
+      unique_id: tpl_light_kitchen_main_lights
+      state: "{{ is_state('switch.kitchenmainlightswitch', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.kitchenmainlightswitch }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.kitchenmainlightswitch }
+
+    - name: "Lounge Sofa Lights"
+      unique_id: tpl_light_lounge_sofa_lights
+      state: "{{ is_state('switch.loungesofalights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.loungesofalights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.loungesofalights }
+
+    - name: "Lounge Hobby Lights"
+      unique_id: tpl_light_lounge_hobby_lights
+      state: "{{ is_state('switch.loungehobbylights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.loungehobbylights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.loungehobbylights }
+
+    - name: "Landing Light"
+      unique_id: tpl_light_landing_light
+      state: "{{ is_state('switch.landinglightswitch', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.landinglightswitch }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.landinglightswitch }
+
+    - name: "Bedroom 2 Main Lights"
+      unique_id: tpl_light_bedroom2_main_lights
+      state: "{{ is_state('switch.bedroom2mainlights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.bedroom2mainlights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.bedroom2mainlights }
+
+    - name: "Bedroom 2 Window Lights"
+      unique_id: tpl_light_bedroom2_window_lights
+      state: "{{ is_state('switch.bedroom2windowlights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.bedroom2windowlights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.bedroom2windowlights }
+
+    - name: "Outside House Lights"
+      unique_id: tpl_light_outside_house_lights
+      state: "{{ is_state('switch.outsidehouselights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.outsidehouselights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.outsidehouselights }
+
+    - name: "Landing Lights"
+      unique_id: tpl_light_landing_lights
+      state: "{{ is_state('switch.landinglights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.landinglights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.landinglights }
+
+    - name: "Hallway Lights"
+      unique_id: tpl_light_hallway_lights
+      state: "{{ is_state('switch.hallwaylights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.hallwaylights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.hallwaylights }
+
+    - name: "Kitchen Dining Lights"
+      unique_id: tpl_light_kitchen_dining_lights
+      state: "{{ is_state('switch.kitchendininglights', 'on') }}"
+      turn_on:
+        action: switch.turn_on
+        target: { entity_id: switch.kitchendininglights }
+      turn_off:
+        action: switch.turn_off
+        target: { entity_id: switch.kitchendininglights }

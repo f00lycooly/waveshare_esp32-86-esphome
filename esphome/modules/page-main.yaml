@@ -1,0 +1,504 @@
+# ───────────────────────────────────────────────────────────────────────────────
+# page-main.yaml — MEDIA-CENTRIC home page for the frontroom panel (4eq.24).
+# Included as a package by frontroom-panel-modular.yaml; MUST be the first page
+# package listed so main_page merges first (boot/default page, swipe order).
+#
+# Media is the home. Layout (720×720), top→bottom:
+#   TOP BAR  (72px)  battery → Energy · centred clock+date · settings cog → info
+#   MEDIA    (576px) album art (overlaid now-playing meta) flanked by icon-only
+#                    Rooms/Playlists rings (left) + a vertical volume matched to
+#                    the art height (right); transport row below (single ep-blue
+#                    play accent). Rooms/Playlists open the page-media modals.
+#   CLIMATE  (72px)  whole bar is a button → Climate (temp · → setpoint · mode · RH)
+#
+# RENDERING MODEL: the live media widgets (album art, title, artist, source room,
+# transport, shuffle/repeat, volume) carry the SAME ids the page-media backend
+# already drives via .state on_value handlers + the refresh_* scripts — page-media
+# keeps the data/sensors/scripts/modals, this page hosts their presentation. The
+# chrome (clock, battery, climate strip) is painted by a 2s home_refresh lambda
+# reading shared sensors (batt_soc here, batt_kw in ui-shared, clim_* in
+# page-climate, ha_time in foundation).
+#
+# Cross-package ids (resolve after the package merge): page_style, nav-target pages
+# energy_page/climate_page/info_screen, nunito_*/colour names (theme), ha_time
+# (foundation), batt_kw (ui-shared), album_art_image + media_* + btn_open_rooms/
+# sources flows + rooms_modal/sources_modal + popup_scrim/popup_start_timeout
+# (page-media + library popup), clim_* (page-climate).
+# ───────────────────────────────────────────────────────────────────────────────
+
+# Non-blocking boot (HomeAutomation-4eq.28): the library boot splash
+# (loading.yaml) only auto-dismisses when a Home Assistant API client connects —
+# so with HA unavailable the panel would sit on "Booting…" forever (only a screen
+# tap cleared it). This fallback dismisses the splash after 12s regardless, so the
+# UI is usable offline; the cog's status ring then shows the (red) HA state. If HA
+# connects first, the library's own start_sync_animation hides the splash and this
+# late hide is a harmless no-op.
+esphome:
+  on_boot:
+    - priority: -100
+      then:
+        - delay: 12s
+        - if:
+            condition:
+              lambda: 'return !id(ha_connected);'
+            then:
+              - logger.log: "HA not connected after 12s — dismissing boot splash (offline UI)"
+              - lvgl.widget.hide: loading_page
+
+sensor:
+  # Battery SOC % — feeds the top-bar battery button. batt_kw (charge/discharge,
+  # +chg/-dis) lives in ui-shared and drives the charging tint in home_refresh.
+  - platform: homeassistant
+    id: batt_soc
+    entity_id: ${battery_soc_entity}
+    internal: true
+
+font:
+  # Bold transport glyphs (play/pause swap + skip + shuffle/repeat states).
+  - file: 'assets/fonts/materialdesignicons-webfont.ttf'
+    id: mdi_lg_44
+    size: 44
+    bpp: 4
+    glyphs:
+      - $mdi_play
+      - $mdi_pause
+      - $mdi_skip_next
+      - $mdi_skip_previous
+      - $mdi_shuffle
+      - $mdi_repeat
+      - $mdi_repeat_off
+      - $mdi_repeat_once
+  # Chrome glyphs: battery + settings (top bar), climate strip.
+  - file: 'assets/fonts/materialdesignicons-webfont.ttf'
+    id: mdi_home_28
+    size: 28
+    bpp: 4
+    glyphs:
+      - $mdi_battery_high
+      - $mdi_battery_charging
+      - $mdi_cog
+      - $mdi_chevron_right
+      - $mdi_fire
+      - $mdi_thermometer
+      - $mdi_thermostat
+      - $mdi_water_percent
+      - $mdi_volume_high
+
+lvgl:
+  pages:
+    # ═════════════════════ HOME · MEDIA SURFACE (4eq.24) ═════════════════════
+    - id: main_page
+      styles: page_style
+      <<: !include
+        file: ../esphome-modular-lvgl-buttons/common/swipe_navigation.yaml
+      widgets:
+        # ───────────── TOP BAR (clickable battery + cog; clock passes taps) ─────────────
+        - obj:
+            align: TOP_LEFT
+            x: 0
+            y: 0
+            width: 100%
+            height: 72
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            clickable: false
+            widgets:
+              # Battery → Energy page
+              - button:
+                  id: btn_home_batt
+                  align: LEFT_MID
+                  x: 16
+                  height: 60
+                  width: 150
+                  radius: 30
+                  bg_color: gray900
+                  border_width: 1
+                  border_color: ep_green
+                  pad_all: 0
+                  layout: {type: flex, flex_flow: ROW, flex_align_main: CENTER, flex_align_cross: CENTER, pad_column: 9}
+                  widgets:
+                    - label: {id: ic_home_batt, clickable: false, text: $mdi_battery_charging, text_font: mdi_home_28, text_color: ep_green}
+                    - label: {id: lbl_home_batt, clickable: false, text: "--%", text_font: oswald_24, text_color: white}
+                  on_click:
+                    - lvgl.page.show: energy_page
+              # Centred clock + date — side by side, same size, cleanly spaced
+              # (4eq.31). Date is muted to keep the time primary. Passes taps through.
+              - obj:
+                  align: CENTER
+                  width: 480
+                  height: 64
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  layout: {type: flex, flex_flow: ROW, flex_align_main: CENTER, flex_align_cross: CENTER, pad_column: 20}
+                  widgets:
+                    - label: {id: lbl_home_clock, clickable: false, text: "--:--", text_font: oswald_42, text_color: white}
+                    - label: {id: lbl_home_date, clickable: false, text: "", text_font: oswald_42, text_color: gray400}
+              # Settings cog → info screen. Its border doubles as the HA
+              # connection-status ring (HomeAutomation-4eq.28): painted green when
+              # a Home Assistant API client is connected, red when not, by
+              # home_refresh (2s) reading the library's ha_connected global.
+              - button:
+                  id: btn_home_settings
+                  align: RIGHT_MID
+                  x: -16
+                  width: 60
+                  height: 60
+                  radius: 30
+                  bg_color: gray900
+                  border_width: 3
+                  border_color: gray700
+                  pad_all: 0
+                  widgets:
+                    - label: {clickable: false, align: CENTER, text: $mdi_cog, text_font: mdi_home_28, text_color: gray400}
+                  on_click:
+                    - lvgl.page.show: info_screen
+
+        # ───────────── MEDIA SURFACE ─────────────
+        - obj:
+            align: TOP_LEFT
+            x: 0
+            y: 72
+            width: 100%
+            height: 576
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            scrollable: false
+            clickable: false
+            widgets:
+              # Cluster: left rail · hero · vertical volume (flex row, centred)
+              - obj:
+                  align: TOP_MID
+                  y: 40
+                  width: 540
+                  height: 340
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  layout: {type: flex, flex_flow: ROW, flex_align_main: CENTER, flex_align_cross: CENTER, pad_column: 22}
+                  widgets:
+                    # LEFT RAIL — icon-only ghost rings (Rooms / Playlists)
+                    - obj:
+                        width: 66
+                        height: 340
+                        bg_opa: TRANSP
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+                        clickable: false
+                        layout: {type: flex, flex_flow: COLUMN, flex_align_main: CENTER, flex_align_cross: CENTER, pad_row: 24}
+                        widgets:
+                          - button:
+                              id: btn_open_rooms
+                              width: 66
+                              height: 66
+                              radius: 33
+                              bg_opa: TRANSP
+                              border_width: 2
+                              border_color: gray700
+                              pad_all: 0
+                              widgets:
+                                - label: {clickable: false, align: CENTER, text: $mdi_speaker_multiple, text_font: mdi_icon_40, text_color: white}
+                              on_click:
+                                - lvgl.widget.hide: sources_modal
+                                - lvgl.widget.show: popup_scrim
+                                - lvgl.widget.show: rooms_modal
+                                - script.execute: popup_start_timeout
+                          - button:
+                              id: btn_open_sources
+                              width: 66
+                              height: 66
+                              radius: 33
+                              bg_opa: TRANSP
+                              border_width: 2
+                              border_color: gray700
+                              pad_all: 0
+                              widgets:
+                                - label: {clickable: false, align: CENTER, text: $mdi_playlist_music, text_font: mdi_icon_40, text_color: white}
+                              on_click:
+                                - lvgl.widget.hide: rooms_modal
+                                - lvgl.widget.show: popup_scrim
+                                - lvgl.widget.show: sources_modal
+                                - script.execute: popup_start_timeout
+
+                    # HERO — album art with overlaid now-playing meta
+                    - obj:
+                        id: home_hero
+                        width: 340
+                        height: 340
+                        bg_color: gray900
+                        bg_opa: cover
+                        radius: 20
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+                        clip_corner: true
+                        clickable: false
+                        widgets:
+                          - image: {id: img_album_art, clickable: false, align: CENTER, src: album_art_image, hidden: true}
+                          - label: {id: ic_album_art_fallback, clickable: false, align: CENTER, text: $mdi_speaker, text_font: mdi_icon_40, text_color: gray500}
+                          # bottom scrim so overlaid meta stays legible over art
+                          - obj:
+                              clickable: false
+                              align: BOTTOM_MID
+                              width: 340
+                              height: 170
+                              bg_color: black
+                              bg_grad_color: black
+                              bg_grad_dir: VER
+                              bg_main_opa: 0%
+                              bg_grad_opa: 78%
+                              border_width: 0
+                              radius: 0
+                              pad_all: 0
+                              scrollable: false
+                          # Current room — a self-contained pill at TOP_LEFT so it
+                          # never collides with the title/artist block (4eq.31). Its
+                          # own translucent bg keeps it legible over bright art (no
+                          # top scrim needed).
+                          - label: {id: lbl_media_device, clickable: false, align: TOP_LEFT, x: 12, y: 12, text: "", text_font: oswald_18, text_color: white, bg_color: 0x000000, bg_opa: 55%, radius: 13, pad_left: 12, pad_right: 12, pad_top: 5, pad_bottom: 5}
+                          - label: {id: lbl_media_title,  clickable: false, align: BOTTOM_LEFT, x: 16, y: -36, width: 300, text: "—", text_font: oswald_36, text_color: white}
+                          - label: {id: lbl_media_artist, clickable: false, align: BOTTOM_LEFT, x: 16, y: -12, width: 300, text: "", text_font: oswald_18, text_color: gray400}
+
+                    # RIGHT — vertical volume, bar matched to art height
+                    - obj:
+                        width: 56
+                        height: 340
+                        bg_opa: TRANSP
+                        border_width: 0
+                        pad_all: 0
+                        scrollable: false
+                        clickable: false
+                        widgets:
+                          - slider:
+                              id: sld_media_vol
+                              align: CENTER
+                              width: 20
+                              height: 340
+                              min_value: 0
+                              max_value: 100
+                              value: 30
+                              bg_color: very_dark_gray
+                              indicator:
+                                bg_color: ep_blue
+                                bg_grad_color: 0x0192B3
+                                bg_grad_dir: VER
+                              knob:
+                                bg_color: white
+                              on_release:
+                                - homeassistant.action:
+                                    action: media_player.volume_set
+                                    variables:
+                                      vol: 'return ((float) lv_slider_get_value(id(sld_media_vol))) / 100.0f;'
+                                      tgt: 'return id(active_media_player);'
+                                    data_template: {entity_id: "{{ tgt }}", volume_level: "{{ vol }}"}
+
+              # TRANSPORT — shuffle · prev · play/pause · next · repeat
+              - obj:
+                  align: TOP_MID
+                  y: 430
+                  width: 520
+                  height: 96
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  layout: {type: flex, flex_flow: ROW, flex_align_main: SPACE_EVENLY, flex_align_cross: CENTER, pad_column: 8}
+                  widgets:
+                    - button:
+                        id: btn_media_shuffle
+                        width: 60
+                        height: 60
+                        radius: 30
+                        bg_color: very_dark_gray
+                        pad_all: 0
+                        widgets:
+                          - label: {id: ic_media_shuffle, clickable: false, align: CENTER, text: $mdi_shuffle, text_font: mdi_lg_44, text_color: white}
+                        on_click:
+                          - lambda: 'id(media_shuffle) = !id(media_shuffle);'
+                          - script.execute: refresh_shuffle_btn
+                          - homeassistant.action:
+                              action: media_player.shuffle_set
+                              variables:
+                                tgt: 'return id(active_media_player);'
+                                shf: 'return id(media_shuffle) ? "true" : "false";'
+                              data_template: {entity_id: "{{ tgt }}", shuffle: "{{ shf }}"}
+                    - button:
+                        id: btn_media_prev
+                        width: 64
+                        height: 64
+                        radius: 32
+                        bg_color: very_dark_gray
+                        pad_all: 0
+                        widgets:
+                          - label: {clickable: false, align: CENTER, text: $mdi_skip_previous, text_font: mdi_lg_44, text_color: white}
+                        on_click:
+                          - homeassistant.action: {action: media_player.media_previous_track, data_template: {entity_id: "{{ tgt }}"}, variables: {tgt: 'return id(active_media_player);'}}
+                    - button:
+                        id: btn_media_playpause
+                        width: 84
+                        height: 84
+                        radius: 42
+                        bg_color: ep_blue
+                        pad_all: 0
+                        widgets:
+                          - label: {id: ic_media_playpause, clickable: false, align: CENTER, text: $mdi_play, text_font: mdi_lg_44, text_color: black}
+                        on_click:
+                          - homeassistant.action: {action: media_player.media_play_pause, data_template: {entity_id: "{{ tgt }}"}, variables: {tgt: 'return id(active_media_player);'}}
+                    - button:
+                        id: btn_media_next
+                        width: 64
+                        height: 64
+                        radius: 32
+                        bg_color: very_dark_gray
+                        pad_all: 0
+                        widgets:
+                          - label: {clickable: false, align: CENTER, text: $mdi_skip_next, text_font: mdi_lg_44, text_color: white}
+                        on_click:
+                          - homeassistant.action: {action: media_player.media_next_track, data_template: {entity_id: "{{ tgt }}"}, variables: {tgt: 'return id(active_media_player);'}}
+                    - button:
+                        id: btn_media_repeat
+                        width: 60
+                        height: 60
+                        radius: 30
+                        bg_color: very_dark_gray
+                        pad_all: 0
+                        widgets:
+                          - label: {id: ic_media_repeat, clickable: false, align: CENTER, text: $mdi_repeat_off, text_font: mdi_lg_44, text_color: white}
+                        on_click:
+                          - lambda: |-
+                              const std::string &r = id(media_repeat);
+                              id(media_repeat) = (r == "off") ? "all" : (r == "all") ? "one" : "off";
+                          - script.execute: refresh_repeat_btn
+                          - homeassistant.action:
+                              action: media_player.repeat_set
+                              variables:
+                                tgt: 'return id(active_media_player);'
+                                rpt: 'return id(media_repeat);'
+                              data_template: {entity_id: "{{ tgt }}", repeat: "{{ rpt }}"}
+
+        # ───────────── CLIMATE BAR (whole bar → Climate page) ─────────────
+        - button:
+            id: btn_home_climate
+            align: BOTTOM_MID
+            y: 0
+            width: 100%
+            height: 72
+            radius: 0
+            bg_color: gray900
+            bg_opa: 40%
+            border_width: 0
+            pad_left: 24
+            pad_right: 24
+            pad_top: 0
+            pad_bottom: 0
+            layout: {type: flex, flex_flow: ROW, flex_align_main: SPACE_BETWEEN, flex_align_cross: CENTER, pad_column: 12}
+            widgets:
+              # left: current temp (thermometer) · setpoint (thermostat icon)
+              - obj:
+                  width: 300
+                  height: 60
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  layout: {type: flex, flex_flow: ROW, flex_align_main: START, flex_align_cross: CENTER, pad_column: 10}
+                  widgets:
+                    - label: {clickable: false, text: $mdi_thermometer, text_font: mdi_home_28, text_color: ep_orange}
+                    - label: {id: lbl_home_clim_temp, clickable: false, text: "--°", text_font: oswald_36, text_color: white}
+                    - label: {clickable: false, text: $mdi_thermostat, text_font: mdi_home_28, text_color: gray500}
+                    - label: {id: lbl_home_clim_set, clickable: false, text: "--°", text_font: oswald_36, text_color: gray400}
+              # centre: mode chip
+              - label: {id: lbl_home_clim_mode, clickable: false, styles: pill, text: "—", text_font: oswald_36, text_color: ep_orange, pad_top: 4, pad_bottom: 4}
+              # right: humidity + chevron
+              - obj:
+                  width: 150
+                  height: 60
+                  bg_opa: TRANSP
+                  border_width: 0
+                  pad_all: 0
+                  scrollable: false
+                  clickable: false
+                  layout: {type: flex, flex_flow: ROW, flex_align_main: END, flex_align_cross: CENTER, pad_column: 8}
+                  widgets:
+                    - label: {clickable: false, text: $mdi_water_percent, text_font: mdi_home_28, text_color: ep_blue}
+                    - label: {id: lbl_home_clim_hum, clickable: false, text: "--%", text_font: oswald_36, text_color: gray500}
+                    - label: {clickable: false, text: $mdi_chevron_right, text_font: mdi_home_28, text_color: gray700}
+            on_click:
+              - lvgl.page.show: climate_page
+
+# ───── Home chrome repaint: 2s interval paints clock / battery / climate strip ─────
+interval:
+  - interval: 2s
+    then:
+      - script.execute: home_refresh
+
+script:
+  - id: home_refresh
+    then:
+      - lambda: |-
+          // ── Clock + date ──
+          auto t = id(ha_time).now();
+          if (t.is_valid()) {
+            char buf[6];
+            snprintf(buf, sizeof(buf), "%02d:%02d", t.hour, t.minute);
+            lv_label_set_text(id(lbl_home_clock), buf);
+            char db[20];
+            t.strftime(db, sizeof(db), "%a %e %b %Y");   // Day · date · year
+            lv_label_set_text(id(lbl_home_date), db);
+          }
+
+          // ── HA connection-status ring around the settings cog (4eq.28) ──
+          // ha_connected is maintained by the library boot splash (loading.yaml)
+          // from api.on_client_connected/disconnected for "Home Assistant " clients.
+          lv_obj_set_style_border_color(id(btn_home_settings),
+            id(ha_connected) ? lv_color_hex(0x7ACF38) : lv_color_hex(0xE5484D), 0);
+
+          // ── Battery: SOC% + charge/discharge glyph & tint ──
+          if (id(batt_soc).has_state()) {
+            char buf[8];
+            snprintf(buf, sizeof(buf), "%d%%", (int)lroundf(id(batt_soc).state));
+            lv_label_set_text(id(lbl_home_batt), buf);
+          }
+          {
+            float kw = id(batt_kw).has_state() ? id(batt_kw).state : 0.0f;
+            bool charging = kw > 0.05f;
+            lv_label_set_text(id(ic_home_batt), charging ? "$mdi_battery_charging" : "$mdi_battery_high");
+            lv_color_t c = charging ? lv_color_hex(0x7ACF38) : lv_color_hex(0xBDBDBD);
+            lv_obj_set_style_text_color(id(ic_home_batt), c, 0);
+            lv_obj_set_style_border_color(id(btn_home_batt),
+              charging ? lv_color_hex(0x7ACF38) : lv_color_hex(0x616161), 0);
+          }
+
+          // ── Climate strip: current → setpoint · mode · humidity ──
+          if (id(clim_current_temp).has_state()) {
+            char b[10]; snprintf(b, sizeof(b), "%.0f°", id(clim_current_temp).state);
+            lv_label_set_text(id(lbl_home_clim_temp), b);
+          }
+          if (id(clim_setpoint).has_state()) {
+            char b[10]; snprintf(b, sizeof(b), "%.0f°", id(clim_setpoint).state);
+            lv_label_set_text(id(lbl_home_clim_set), b);
+          }
+          if (id(clim_humidity).has_state()) {
+            char b[8]; snprintf(b, sizeof(b), "%.0f%%", id(clim_humidity).state);
+            lv_label_set_text(id(lbl_home_clim_hum), b);
+          }
+          {
+            std::string m = id(clim_mode).state;
+            lv_color_t c = (m == "heat") ? lv_color_hex(0xF37320)
+                         : (m == "cool") ? lv_color_hex(0x01B4DE)
+                         : (m == "auto") ? lv_color_hex(0x7ACF38)
+                                         : lv_color_hex(0x9E9E9E);
+            for (auto &ch : m) ch = toupper(ch);
+            lv_label_set_text(id(lbl_home_clim_mode), m.empty() ? "—" : m.c_str());
+            lv_obj_set_style_text_color(id(lbl_home_clim_mode), c, 0);
+          }

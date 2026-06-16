@@ -1,0 +1,45 @@
+# Panel — active-player mirror
+#
+# PRODUCES: sensor.active_media — a single template sensor that mirrors whichever
+# media_player is currently named in input_text.active_player, so the panel binds
+# its now-playing display (title/glyph/volume/art) to one stable entity_id.
+# INPUTS: none to retarget here — it follows input_text.active_player at runtime.
+#
+# ESPHome's `homeassistant` text_sensor binds to a FIXED entity_id at compile time,
+# so it can't directly follow a runtime device selection. HA's template engine
+# tracks the dynamically-referenced player, so this re-renders when either the
+# selection OR the selected player's attributes change.
+#
+# Consumed by the panel: state -> play/pause glyph; attrs title/device_name ->
+# labels; volume -> slider; entity_picture -> album art.
+
+- sensor:
+    - name: Active Media
+      unique_id: active_media
+      icon: mdi:cast-variant
+      state: >
+        {% set p = states('input_text.active_player') %}
+        {{ states(p) if p not in ('unknown','unavailable','') else 'unknown' }}
+      attributes:
+        target: "{{ states('input_text.active_player') }}"
+        device_name: >
+          {% set p = states('input_text.active_player') %}
+          {{ state_attr(p, 'friendly_name') | default('', true) }}
+        title: >
+          {% set p = states('input_text.active_player') %}
+          {{ state_attr(p, 'media_title') | default('', true) }}
+        artist: >
+          {% set p = states('input_text.active_player') %}
+          {{ state_attr(p, 'media_artist') | default('', true) }}
+        entity_picture: >
+          {% set p = states('input_text.active_player') %}
+          {{ state_attr(p, 'entity_picture') | default('', true) }}
+        volume: >
+          {% set p = states('input_text.active_player') %}
+          {{ state_attr(p, 'volume_level') | default(0, true) }}
+        shuffle: >
+          {% set p = states('input_text.active_player') %}
+          {{ 'on' if state_attr(p, 'shuffle') else 'off' }}
+        repeat: >
+          {% set p = states('input_text.active_player') %}
+          {{ state_attr(p, 'repeat') | default('off', true) }}

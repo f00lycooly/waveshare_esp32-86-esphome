@@ -1,0 +1,753 @@
+# Front Room panel — ASSIST module
+#
+# The full voice/audio stack, split out of frontroom-panel-modular.yaml so the
+# base ESP can be brought up first and this layer enabled as a chunk. Pulled in
+# as a package from the core file:
+#
+#   packages:
+#     assist: !include modules/assist.yaml
+#
+# Self-contained and LVGL-free: this module shares no IDs with the UI module, so
+# it can be enabled on its own (or alongside ui) atop the core. It contributes
+# its own substitutions plus esphome.on_boot via package merge.
+#
+# Owns: voice_assistant, micro_wake_word, on-device media_player, the Assist
+# scripts, the Assist switches/selects, the forced-reboot button, the side
+# physical button, and the Assist-scoped globals.
+
+substitutions:
+  ######  Audio Files ######
+  # FLAC files for on-device sounds (used by media_player.files below).
+  # Vendored locally under assets/sounds/ (deployed to /config/assets by `make sync`)
+  # so the build has no remote dependency. Paths resolve from the config root.
+  timerfinished_ondevice: assets/sounds/timer_finished.flac
+  wakesound_ondevice: assets/sounds/awake.flac
+  notify_ondevice: assets/sounds/notify.flac
+  # HA paths for external audio sounds (used when output_audio is on)
+  timerfinished_external: /local/sounds/timer_finished.mp3
+  wakesound_external: /local/sounds/awake.mp3
+  notify_external: /local/sounds/notify.mp3
+
+  ######  Voice Assistant Phase IDs ######
+  voice_assist_idle_phase_id: "1"
+  voice_assist_listening_phase_id: "2"
+  voice_assist_thinking_phase_id: "3"
+  voice_assist_replying_phase_id: "4"
+  voice_assist_not_ready_phase_id: "10"
+  voice_assist_error_phase_id: "11"
+  voice_assist_muted_phase_id: "12"
+  voice_assist_timer_finished_phase_id: "20"
+  voice_assist_timer_finishing_phase_id: "30"
+
+esphome:
+  on_boot:
+    priority: 600
+    then:
+      - delay: 15s
+      - if:
+          condition:
+            switch.is_on: output_audio
+          then:
+            media_player.volume_set:
+              id: my_media_player
+              volume: 0
+      - delay: 30s
+      - if:
+          condition:
+            lambda: return id(init_in_progress);
+          then:
+            - lambda: id(init_in_progress) = false;
+
+globals:
+  - id: init_in_progress
+    type: bool
+    restore_value: false
+    initial_value: "true"
+  - id: voice_assistant_phase
+    type: int
+    restore_value: false
+    initial_value: ${voice_assist_not_ready_phase_id}
+  - id: global_is_assisting
+    type: bool
+    restore_value: false
+  - id: voice_assistant_timeout
+    type: int
+    restore_value: false
+    initial_value: '15000'
+
+script:
+  # ───── Assist scripts (ported from baseline; IDs match agillis hardware file) ─────
+  - id: start_wake_word
+    then:
+      - lambda: ESP_LOGD("script", "start_wake_word");
+      - if:
+          condition:
+            and:
+              - not:
+                  - voice_assistant.is_running:
+              - lambda: return id(wake_word_engine_location).current_option() == "On device";
+          then:
+            - lambda: id(va).set_use_wake_word(false);
+            - micro_wake_word.start:
+      - if:
+          condition:
+            and:
+              - not:
+                  - voice_assistant.is_running:
+              - lambda: return id(wake_word_engine_location).current_option() == "In Home Assistant";
+          then:
+            - lambda: id(va).set_use_wake_word(true);
+            - voice_assistant.start_continuous:
+
+  - id: stop_wake_word
+    then:
+      - lambda: ESP_LOGD("script", "stop_wake_word");
+      - if:
+          condition:
+            lambda: return id(wake_word_engine_location).current_option() == "In Home Assistant";
+          then:
+            - lambda: id(va).set_use_wake_word(false);
+            - voice_assistant.stop:
+      - if:
+          condition:
+            lambda: return id(wake_word_engine_location).current_option() == "On device";
+          then:
+            - micro_wake_word.stop:
+
+  - id: set_idle_or_mute_phase
+    then:
+      - lambda: ESP_LOGD("script", "set_idle_or_mute_phase");
+      - if:
+          condition:
+            switch.is_off: mute_switch
+          then:
+            - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+          else:
+            - lambda: id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
+
+  - id: timer_started_external
+    then:
+      while:
+        condition:
+          switch.is_on: timer_ringing
+        then:
+          - homeassistant.action:
+              action: media_player.play_media
+              data:
+                entity_id: "media_player.${external_media_player}"
+                media_content_id: '${ha_base_url}${timerfinished_external}'
+                media_content_type: music
+          - delay: 1700ms
+
+  - id: stopalarmtimer
+    mode: restart
+    then:
+      - switch.turn_off: timer_ringing
+      - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+
+media_player:
+  - platform: speaker
+    name: Media Player
+    id: my_media_player
+    task_stack_in_psram: true
+    volume_increment: 0.05
+    volume_min: 0.5
+    volume_max: 0.8
+    announcement_pipeline:
+      speaker: announcement_resampling_speaker
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 1
+    media_pipeline:
+      speaker: media_resampling_speaker
+      format: FLAC
+      num_channels: 2
+      sample_rate: 48000
+    files:
+      - id: timer_finished_sound
+        file: ${timerfinished_ondevice}
+      - id: wake_sound_file
+        file: ${wakesound_ondevice}
+      - id: notify_sound_file
+        file: ${notify_ondevice}
+    on_state:
+      then:
+        - lambda: ESP_LOGD("media_player", "on_state");
+        - if:
+            condition:
+              and:
+                - switch.is_off: timer_ringing
+                - not:
+                    voice_assistant.is_running:
+                - not:
+                    media_player.is_announcing:
+            then:
+              - mixer_speaker.apply_ducking:
+                  id: media_mixing_input
+                  decibel_reduction: 0
+                  duration: 1.0s
+    on_play:
+      - lambda: ESP_LOGD("media_player", "on_play");
+      - wait_until:
+          - lambda: return id(global_is_assisting) == false;
+      - if:
+          condition:
+            - microphone.is_capturing:
+          then:
+            - script.execute: stop_wake_word
+            - if:
+                condition:
+                  - lambda: return id(wake_word_engine_location).current_option() == "In Home Assistant";
+                then:
+                  - wait_until:
+                      - not:
+                          voice_assistant.is_running:
+    on_announcement:
+      - lambda: ESP_LOGD("media_player", "on_announcement");
+      - if:
+          condition:
+            - microphone.is_capturing:
+          then:
+            - script.execute: stop_wake_word
+            - if:
+                condition:
+                  - lambda: return id(wake_word_engine_location).current_option() == "In Home Assistant";
+                then:
+                  - wait_until:
+                      - not:
+                          voice_assistant.is_running:
+      - mixer_speaker.apply_ducking:
+          id: media_mixing_input
+          decibel_reduction: 20
+          duration: 0.0s
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - lambda: id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
+    on_idle:
+      - lambda: ESP_LOGD("media_player", "on_idle");
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - wait_until:
+                - not:
+                    speaker.is_playing:
+                      id: my_speaker
+            - script.execute: start_wake_word
+            - script.execute: set_idle_or_mute_phase
+    on_pause:
+      - media_player.stop
+
+micro_wake_word:
+  id: mww
+  vad:
+    probability_cutoff: 0.20
+    sliding_window_size: 1
+  stop_after_detection: false
+  # All models vendored locally under assets/microwakeword/ (each .json + its
+  # .tflite). No remote fetch at build time — built-ins included, not just the
+  # custom okay_hal/hey_luna/stop. Paths resolve from the config root.
+  models:
+    - model: assets/microwakeword/okay_nabu.json
+      id: okay_nabu
+    - model: assets/microwakeword/hey_mycroft.json
+      id: hey_mycroft
+    - model: assets/microwakeword/hey_jarvis.json
+      id: hey_jarvis
+    - model: assets/microwakeword/alexa.json
+      id: alexa
+    - model: assets/microwakeword/okay_hal.json
+      id: okay_hal
+    - model: assets/microwakeword/hey_luna.json
+      id: hey_luna
+    - model: assets/microwakeword/stop.json
+      id: stop
+      internal: true
+      probability_cutoff: 0.40
+      sliding_window_size: 3
+  on_wake_word_detected:
+    - if:
+        condition:
+          switch.is_on: timer_ringing
+        then:
+          - script.execute: stopalarmtimer
+        else:
+          - if:
+              condition:
+                voice_assistant.is_running:
+              then:
+                voice_assistant.stop:
+              else:
+                - if:
+                    condition:
+                      - switch.is_on: output_audio
+                    then:
+                      - homeassistant.action:
+                          action: media_player.media_stop
+                          data:
+                            entity_id: "media_player.${external_media_player}"
+                - if:
+                    condition:
+                      media_player.is_announcing:
+                    then:
+                      - media_player.stop:
+                          announcement: true
+                    else:
+                      - lambda: id(global_is_assisting) = true;
+                      - delay: 50ms
+                      - if:
+                          condition:
+                            and:
+                              - switch.is_off: output_audio
+                              - switch.is_on: wake_sound
+                          then:
+                            - media_player.speaker.play_on_device_media_file:
+                                media_file: wake_sound_file
+                                announcement: true
+                            - wait_until:
+                                not:
+                                  - media_player.is_announcing:
+                            - delay: 150ms
+                          else:
+                            - if:
+                                condition:
+                                  and:
+                                    - switch.is_on: output_audio
+                                    - switch.is_on: wake_sound
+                                then:
+                                  - homeassistant.action:
+                                      action: media_player.play_media
+                                      data:
+                                        entity_id: "media_player.${external_media_player}"
+                                        media_content_id: '${ha_base_url}${wakesound_external}'
+                                        media_content_type: music
+                                  - delay: 500ms
+                      - voice_assistant.start:
+                          wake_word: !lambda return wake_word;
+
+voice_assistant:
+  id: va
+  # The local baseline-derived hardware package declares my_microphone as a
+  # single (mono) i2s channel, so only channel 0 exists. The baseline this was ported
+  # from assumed a stereo mic with an AEC reference on channel 1 — not available here.
+  microphone:
+    - microphone: my_microphone
+      channels: 0
+  media_player: my_media_player
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 4.0
+  on_wake_word_detected:
+    - if:
+        condition:
+          switch.is_on: timer_ringing
+        then:
+          - script.execute: stopalarmtimer
+        else:
+          - if:
+              condition:
+                - switch.is_on: output_audio
+              then:
+                - homeassistant.action:
+                    action: media_player.media_stop
+                    data:
+                      entity_id: "media_player.${external_media_player}"
+          - if:
+              condition:
+                media_player.is_announcing:
+              then:
+                - media_player.stop:
+                    announcement: true
+              else:
+                - lambda: id(global_is_assisting) = true;
+                - delay: 50ms
+                - if:
+                    condition:
+                      and:
+                        - switch.is_off: output_audio
+                        - switch.is_on: wake_sound
+                    then:
+                      - media_player.speaker.play_on_device_media_file:
+                          media_file: wake_sound_file
+                          announcement: true
+                      - wait_until:
+                          not:
+                            - media_player.is_announcing:
+                      - delay: 150ms
+                    else:
+                      if:
+                        condition:
+                          and:
+                            - switch.is_on: wake_sound
+                            - switch.is_on: output_audio
+                        then:
+                          - homeassistant.action:
+                              action: media_player.play_media
+                              data:
+                                entity_id: "media_player.${external_media_player}"
+                                media_content_id: '${ha_base_url}${wakesound_external}'
+                                media_content_type: music
+  on_listening:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_listening_phase_id};
+  on_stt_vad_end:
+    - lambda: ESP_LOGD("voice_assistant", "on_stt_vad_end");
+    - lambda: id(voice_assistant_phase) = ${voice_assist_thinking_phase_id};
+  on_intent_progress:
+    - if:
+        condition:
+          lambda: 'return !x.empty();'
+        then:
+          - lambda: id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
+  on_tts_start:
+    - if:
+        condition:
+          lambda: 'return id(voice_assistant_phase) != ${voice_assist_replying_phase_id};'
+        then:
+          - lambda: id(voice_assistant_phase) = ${voice_assist_replying_phase_id};
+  on_tts_end:
+    - lambda: ESP_LOGD("voice_assistant", "on_tts_end");
+    - if:
+        condition:
+          and:
+            - switch.is_on: mute_response_switch
+            - switch.is_off: media_mute
+            - switch.is_off: ext_media_mute
+        then:
+          - switch.turn_on: media_mute
+          - switch.turn_on: ext_media_mute
+    - if:
+        condition:
+          - switch.is_on: output_audio
+        then:
+          - homeassistant.action:
+              action: media_player.play_media
+              data:
+                entity_id: "media_player.${external_media_player}"
+                media_content_id: !lambda 'return x;'
+                media_content_type: music
+                announce: "true"
+  on_end:
+    - lambda: ESP_LOGD("voice_assistant", "on_end");
+    - wait_until:
+        condition:
+          - media_player.is_announcing:
+        timeout: 0.5s
+    - wait_until:
+        condition:
+          - and:
+              - not:
+                  media_player.is_announcing:
+              - not:
+                  media_player.is_playing:
+        timeout: !lambda |-
+          return id(voice_assistant_timeout);
+    - if:
+        condition:
+          any:
+            - media_player.is_announcing:
+            - media_player.is_playing:
+        then:
+          - lambda: ESP_LOGD("voice_assistant", "Forced Reboot");
+          - button.press: forced_reboot
+    - mixer_speaker.apply_ducking:
+        id: media_mixing_input
+        decibel_reduction: 0
+        duration: 1.0s
+    - lambda: id(global_is_assisting) = false;
+    - if:
+        condition:
+          - lambda: return id(wake_word_engine_location).current_option() == "On device";
+        then:
+          - lambda: id(va).set_use_wake_word(false);
+          - micro_wake_word.start:
+    - script.execute: set_idle_or_mute_phase
+    - if:
+        condition:
+          and:
+            - switch.is_on: mute_response_switch
+            - switch.is_on: media_mute
+            - switch.is_on: ext_media_mute
+        then:
+          - switch.turn_off: media_mute
+          - switch.turn_off: ext_media_mute
+  on_error:
+    - if:
+        condition:
+          lambda: return !id(init_in_progress);
+        then:
+          - lambda: id(voice_assistant_phase) = ${voice_assist_error_phase_id};
+          - delay: 1s
+          - if:
+              condition:
+                switch.is_off: mute_switch
+              then:
+                - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+              else:
+                - lambda: id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
+    - lambda: id(global_is_assisting) = false;
+  on_client_connected:
+    - lambda: id(init_in_progress) = false;
+    - script.execute: start_wake_word
+    - script.execute: set_idle_or_mute_phase
+  on_client_disconnected:
+    - script.execute: stop_wake_word
+    - lambda: id(voice_assistant_phase) = ${voice_assist_not_ready_phase_id};
+  on_timer_finished:
+    - lambda: id(voice_assistant_phase) = ${voice_assist_timer_finished_phase_id};
+    - switch.turn_on: timer_ringing
+
+button:
+  # Separate from library's "Restart" — used by voice_assistant fallback when
+  # media playback stalls after a timeout.
+  - platform: restart
+    id: forced_reboot
+    name: "Forced Reboot"
+    entity_category: diagnostic
+
+switch:
+  - platform: template
+    name: Output audio externally
+    id: output_audio
+    icon: 'mdi:volume-off'
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    on_turn_on:
+      - media_player.volume_set:
+          id: my_media_player
+          volume: 0
+    on_turn_off:
+      - media_player.volume_set:
+          id: my_media_player
+          volume: 0.8
+
+  - platform: template
+    name: Mute
+    id: mute_switch
+    icon: "mdi:microphone-off"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    on_turn_off:
+      - microphone.unmute:
+          id: my_microphone
+      - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+    on_turn_on:
+      - microphone.mute:
+          id: my_microphone
+      - lambda: id(voice_assistant_phase) = ${voice_assist_muted_phase_id};
+
+  - platform: template
+    id: media_mute
+    optimistic: true
+    on_turn_on:
+      - media_player.volume_set:
+          id: my_media_player
+          volume: 0
+    on_turn_off:
+      - media_player.volume_set:
+          id: my_media_player
+          volume: 0.8
+
+  - platform: template
+    id: timer_ringing
+    optimistic: true
+    internal: true
+    restore_mode: ALWAYS_OFF
+    on_turn_off:
+      - micro_wake_word.disable_model: stop
+      - lambda: id(voice_assistant_phase) = ${voice_assist_idle_phase_id};
+      - lambda: |-
+              id(my_media_player)
+                ->make_call()
+                .set_command(media_player::MediaPlayerCommand::MEDIA_PLAYER_COMMAND_REPEAT_OFF)
+                .set_announcement(true)
+                .perform();
+              id(my_media_player)->set_playlist_delay_ms(speaker::AudioPipelineType::ANNOUNCEMENT, 0);
+      - media_player.stop:
+          announcement: true
+    on_turn_on:
+      - lambda: |-
+            id(my_media_player)
+              ->make_call()
+              .set_command(media_player::MediaPlayerCommand::MEDIA_PLAYER_COMMAND_REPEAT_ONE)
+              .set_announcement(true)
+              .perform();
+            id(my_media_player)->set_playlist_delay_ms(speaker::AudioPipelineType::ANNOUNCEMENT, 1000);
+      - if:
+          condition:
+            switch.is_on: output_audio
+          then:
+            - script.execute: timer_started_external
+          else:
+            - media_player.speaker.play_on_device_media_file:
+                media_file: timer_finished_sound
+                announcement: true
+      - micro_wake_word.start:
+      - micro_wake_word.enable_model: stop
+      - delay: 15min
+      - switch.turn_off: timer_ringing
+
+  - platform: template
+    id: wake_sound
+    name: Play wake sound
+    icon: mdi:music
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  - platform: template
+    id: mute_response_switch
+    name: Mute Responses
+    icon: mdi:chat-sleep
+    entity_category: config
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+
+  - platform: template
+    id: ext_media_mute
+    icon: 'mdi:volume-off'
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF
+    entity_category: config
+    on_turn_on:
+      - homeassistant.action:
+          action: media_player.volume_mute
+          data:
+            entity_id: "media_player.${external_media_player}"
+    on_turn_off:
+      - homeassistant.action:
+          action: media_player.volume_mute
+          data:
+            entity_id: "media_player.${external_media_player}"
+
+select:
+  - platform: template
+    entity_category: config
+    name: Wake word engine location
+    id: wake_word_engine_location
+    icon: "mdi:account-voice"
+    optimistic: true
+    restore_value: true
+    options:
+      - In Home Assistant
+      - On device
+    on_value:
+      - if:
+          condition:
+            lambda: return !id(init_in_progress);
+          then:
+            - wait_until:
+                lambda: return id(voice_assistant_phase) == ${voice_assist_muted_phase_id} || id(voice_assistant_phase) == ${voice_assist_idle_phase_id};
+            - if:
+                condition:
+                  lambda: return id(wake_word_engine_location).current_option() == "In Home Assistant";
+                then:
+                  - micro_wake_word.stop:
+                  - delay: 500ms
+                  - if:
+                      condition:
+                        switch.is_off: mute_switch
+                      then:
+                        - lambda: id(va).set_use_wake_word(true);
+                        - voice_assistant.start_continuous:
+            - if:
+                condition:
+                  lambda: return id(wake_word_engine_location).current_option() == "On device";
+                then:
+                  - lambda: id(va).set_use_wake_word(false);
+                  - voice_assistant.stop
+                  - delay: 500ms
+                  - if:
+                      condition:
+                        switch.is_off: mute_switch
+                      then:
+                        - micro_wake_word.start:
+
+  - platform: template
+    name: "Wake word sensitivity"
+    optimistic: true
+    initial_option: Moderately sensitive
+    restore_value: true
+    entity_category: config
+    options:
+      - Slightly sensitive
+      - Moderately sensitive
+      - Very sensitive
+    on_value:
+      lambda: |-
+        if (x == "Slightly sensitive") {
+          id(okay_nabu).set_probability_cutoff(247);
+          id(hey_jarvis).set_probability_cutoff(247);
+          id(hey_mycroft).set_probability_cutoff(253);
+          id(alexa).set_probability_cutoff(250);
+          id(okay_hal).set_probability_cutoff(247);
+          id(hey_luna).set_probability_cutoff(247);
+        } else if (x == "Moderately sensitive") {
+          id(okay_nabu).set_probability_cutoff(176);
+          id(hey_jarvis).set_probability_cutoff(235);
+          id(hey_mycroft).set_probability_cutoff(242);
+          id(alexa).set_probability_cutoff(235);
+          id(okay_hal).set_probability_cutoff(235);
+          id(hey_luna).set_probability_cutoff(235);
+        } else if (x == "Very sensitive") {
+          id(okay_nabu).set_probability_cutoff(143);
+          id(hey_jarvis).set_probability_cutoff(212);
+          id(hey_mycroft).set_probability_cutoff(237);
+          id(alexa).set_probability_cutoff(217);
+          id(okay_hal).set_probability_cutoff(212);
+          id(hey_luna).set_probability_cutoff(212);
+        }
+
+binary_sensor:
+  ### side physical button ###
+  # Short press stops voice / media / timer; long press triggers the library's
+  # factory-reset button. Lives with assist because the short-press actions
+  # target the voice + on-device media stack.
+  - platform: gpio
+    pin:
+      number: GPIO35
+      mode: INPUT_PULLUP
+      inverted: true
+      ignore_strapping_warning: true
+    id: side_top_button
+    internal: true
+    on_multi_click:
+      # short press: stop voice / media / timer
+      - timing:
+          - ON for at least 50ms
+          - OFF for at least 50ms
+        then:
+          - if:
+              condition:
+                - voice_assistant.is_running
+              then:
+                - voice_assistant.stop
+          - if:
+              condition:
+                - switch.is_on: timer_ringing
+              then:
+                - script.execute: stopalarmtimer
+          - if:
+              condition:
+                - media_player.is_playing:
+              then:
+                - media_player.stop:
+          - if:
+              condition:
+                - switch.is_on: output_audio
+              then:
+                - homeassistant.action:
+                    action: media_player.media_stop
+                    data:
+                      entity_id: "media_player.${external_media_player}"
+      # long press: factory reset (library's "Reset" button)
+      - timing:
+          - ON for at least 10s
+        then:
+          - button.press: Reset

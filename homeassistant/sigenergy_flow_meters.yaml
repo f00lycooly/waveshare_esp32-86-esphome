@@ -1,0 +1,36 @@
+# Daily utility_meters over the flow-path energy integrations
+# (sigenergy_flow_integrations.yaml). Each resets at midnight, giving the panel
+# energy Sankey its measured daily flow splits (kWh).
+# PRODUCES: sensor.daily_flow_pv_home, ...pv_battery, ...pv_grid,
+#   sensor.daily_flow_battery_home, ...battery_grid,
+#   sensor.daily_flow_grid_home, ...grid_battery
+# INPUTS: none to retarget — sources are produced by sigenergy_flow_integrations.yaml.
+# Included from configuration.yaml as: utility_meter: !include sigenergy_flow_meters.yaml
+
+daily_flow_pv_home:
+  source: sensor.flow_pv_home_energy
+  cycle: daily
+
+daily_flow_pv_battery:
+  source: sensor.flow_pv_battery_energy
+  cycle: daily
+
+daily_flow_pv_grid:
+  source: sensor.flow_pv_grid_energy
+  cycle: daily
+
+daily_flow_battery_home:
+  source: sensor.flow_battery_home_energy
+  cycle: daily
+
+daily_flow_battery_grid:
+  source: sensor.flow_battery_grid_energy
+  cycle: daily
+
+daily_flow_grid_home:
+  source: sensor.flow_grid_home_energy
+  cycle: daily
+
+daily_flow_grid_battery:
+  source: sensor.flow_grid_battery_energy
+  cycle: daily

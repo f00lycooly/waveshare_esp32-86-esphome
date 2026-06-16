@@ -1,0 +1,81 @@
+# Panel — Sonos group + playing-state topology
+#
+# PRODUCES: sensor.sonos_topology — feeds the panel's Rooms modal with live
+# "what's playing where" so it can show per-tile status (idle/playing/grouped/
+# coordinator) and pick a sensible default context room.
+# INPUTS: the media_player.* room entities below are generic Sonos room names —
+# rename them to match your speakers (one-time edit; update every occurrence,
+# including the two `rooms` lists in the state and group_label templates).
+#
+# The ESPHome `homeassistant` text_sensor reads ONE attribute at a time, so each
+# room is exposed as a compact pipe-encoded attribute the panel splits:
+#
+#     <state>|<is_coordinator 0/1>|<group_size>
+#
+#   state          : playing | paused | idle | unavailable (HA media_player state)
+#   is_coordinator : 1 if this room drives its group (group_members[0] == itself)
+#   group_size     : number of players in this room's group (1 = standalone)
+#
+# Sonos behaviour: grouped members MIRROR the coordinator's state, so the live
+# origin is the room that is BOTH playing AND its own coordinator. Coordinator is
+# intended to be group_members[0] but ordering can be unreliable — the panel
+# cross-checks is_coordinator against state.
+#
+# sensor.sonos_topology:
+#   state      = default context room (the active playing coordinator, else living_room)
+#   attributes = one per Sonos room (keys below) + group_label for a human summary
+#
+# NOTE: Jinja (`{% %}`) is only valid INSIDE the `>` template strings below — never at
+# the YAML top level. The room list is therefore re-declared in each template that
+# loops over it (state, group_label); the per-room attributes hardcode their entity.
+
+- sensor:
+    - name: Sonos Topology
+      unique_id: sonos_topology
+      icon: mdi:speaker-multiple
+      # Default context room: first room that is playing AND is its own coordinator;
+      # fall back to Living Room when nothing is actively driving a group.
+      state: >
+        {% set rooms = ['media_player.living_room', 'media_player.kitchen', 'media_player.kitchen_2', 'media_player.office', 'media_player.bedroom', 'media_player.garage', 'media_player.sonos_roam'] %}
+        {% set ns = namespace(room='media_player.living_room', found=false) %}
+        {% for e in rooms %}
+          {% set gm = state_attr(e, 'group_members') or [] %}
+          {% if not ns.found and states(e) == 'playing' and (gm[0] if gm else e) == e %}
+            {% set ns.room = e %}{% set ns.found = true %}
+          {% endif %}
+        {% endfor %}
+        {{ ns.room }}
+      attributes:
+        # CHANGE: rename these room keys + entities to match your speakers.
+        living_room: >
+          {% set e = 'media_player.living_room' %}{% set gm = state_attr(e,'group_members') or [] %}
+          {{ states(e) }}|{{ 1 if (gm and gm[0]==e) else 0 }}|{{ gm|length }}
+        kitchen: >
+          {% set e = 'media_player.kitchen' %}{% set gm = state_attr(e,'group_members') or [] %}
+          {{ states(e) }}|{{ 1 if (gm and gm[0]==e) else 0 }}|{{ gm|length }}
+        kitchen_2: >
+          {% set e = 'media_player.kitchen_2' %}{% set gm = state_attr(e,'group_members') or [] %}
+          {{ states(e) }}|{{ 1 if (gm and gm[0]==e) else 0 }}|{{ gm|length }}
+        office: >
+          {% set e = 'media_player.office' %}{% set gm = state_attr(e,'group_members') or [] %}
+          {{ states(e) }}|{{ 1 if (gm and gm[0]==e) else 0 }}|{{ gm|length }}
+        bedroom: >
+          {% set e = 'media_player.bedroom' %}{% set gm = state_attr(e,'group_members') or [] %}
+          {{ states(e) }}|{{ 1 if (gm and gm[0]==e) else 0 }}|{{ gm|length }}
+        garage: >
+          {% set e = 'media_player.garage' %}{% set gm = state_attr(e,'group_members') or [] %}
+          {{ states(e) }}|{{ 1 if (gm and gm[0]==e) else 0 }}|{{ gm|length }}
+        sonos_roam: >
+          {% set e = 'media_player.sonos_roam' %}{% set gm = state_attr(e,'group_members') or [] %}
+          {{ states(e) }}|{{ 1 if (gm and gm[0]==e) else 0 }}|{{ gm|length }}
+        # Human-readable summary of the active group (friendly names of the coordinator's members).
+        group_label: >
+          {% set rooms = ['media_player.living_room', 'media_player.kitchen', 'media_player.kitchen_2', 'media_player.office', 'media_player.bedroom', 'media_player.garage', 'media_player.sonos_roam'] %}
+          {% set ns = namespace(label='') %}
+          {% for e in rooms %}
+            {% set gm = state_attr(e, 'group_members') or [] %}
+            {% if states(e) == 'playing' and (gm[0] if gm else e) == e and gm|length > 0 %}
+              {% set ns.label = gm | map('state_attr', 'friendly_name') | select('string') | join(' + ') %}
+            {% endif %}
+          {% endfor %}
+          {{ ns.label }}

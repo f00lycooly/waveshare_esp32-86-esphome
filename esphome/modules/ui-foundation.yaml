@@ -1,0 +1,123 @@
+# Front Room ESP32-P4 wall panel — UI foundation package
+#
+# Included as a package by ../frontroom-panel-modular.yaml on top of the local,
+# known-working hardware package. This file owns the device core only:
+#   - Project metadata (name, friendly_name, encryption)
+#   - Connectivity (api, wifi, captive_portal) + connectivity globals
+#   - Logger, image defaults, HA time source
+#   - The six library package includes (ota, sensors_base, theme, popup,
+#     loading, info) and the time_update hook stub
+#   - Theme/font substitutions consumed by the library packages
+# It composes with assist.yaml (voice/audio stack, on_boot) and the per-page
+# packages (ui-shared.yaml + page-*.yaml) — no LVGL pages or voice stack here.
+#
+# secrets.yaml must define: wifi_ssid, wifi_password, esphome_api_key
+
+substitutions:
+###### Fonts / UI defaults (referenced by library packages) ######
+# Library packages (sensors_base, info, popup, loading) reference $text_font and the
+# placeholder tile below uses it too. nunito_20 is defined in common/theme/fonts.yaml.
+# The icon font ($icon_font) + per-widget colors get added with the theme/card beads
+# (HomeAutomation-4eq.9, 4eq.2–4eq.8) when the widgets that consume them land.
+  text_font: nunito_20
+# Widen the Nunito glyph coverage (library default is GF_Latin_Kernel) so the
+# degree sign and extended punctuation used by the climate/tariff cards render.
+# This is the documented extension point in common/theme/fonts.yaml.
+  glyphsets: GF_Latin_Core
+# Popup auto-close timeout consumed by ui/popup/popup_system.yaml.
+  popup_timeout_seconds: "120"
+
+###### Theme overrides (defaults in common/theme/index.yaml) ######
+# Lean dark + Sigen-green accent. Override here without forking the library.
+  button_on_color: "ep_orange"        # tile background when entity is on
+  button_off_color: "very_dark_gray"  # tile background when off
+  icon_on_color: "yellow"
+  icon_off_color: "gray"
+  label_on_color: "white"
+  label_off_color: "gray"
+
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  name_add_mac_suffix: false
+
+  project:
+    name: "${esphome_project_name}"
+    version: "${esphome_project_version}"
+
+api:
+  encryption:
+    key: !secret esphome_api_key
+  on_client_connected:
+    - lambda: id(api_connection) = true;
+  on_client_disconnected:
+    - lambda: id(api_connection) = false;
+
+# WiFi kept locally (not via common/wifi.yaml) — we want power_save tuning,
+# native roaming, and a hardcoded fallback password.
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  fast_connect: true
+  power_save_mode: NONE
+  enable_btm: true
+  enable_rrm: true
+  ap:
+    ssid: ${name}
+    password: ${wifi_fallback_pwd}
+  on_connect:
+    - lambda: id(wifi_connection) = true;
+    - switch.turn_on: audio_amplifier
+  on_disconnect:
+    - lambda: id(wifi_connection) = false;
+
+captive_portal:
+
+# Library packages use logger.log actions throughout; a logger component must exist.
+logger:
+  level: debug
+  logs:
+    lvgl: info
+  hardware_uart: UART0
+
+# Byte order for images loaded in this file and the included packages (loading splash,
+# popup hue/kelvin rings). The P4 panel display expects little_endian.
+image:
+  defaults:
+    byte_order: little_endian
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+packages:
+  # OTA with LVGL progress overlay
+  ota_screen: !include ../esphome-modular-lvgl-buttons/common/ota.yaml
+  # WiFi signal, IP/SSID/MAC, CPU temp, version, build timestamp, restart button
+  sensors: !include ../esphome-modular-lvgl-buttons/common/sensors_base.yaml
+  # Palette, fonts, MDI glyphs, LVGL style_definitions
+  theme: !include ../esphome-modular-lvgl-buttons/common/theme/index.yaml
+  # Popup overlay infrastructure (needed for light/climate detail pages)
+  popup_system: !include ../esphome-modular-lvgl-buttons/ui/popup/popup_system.yaml
+  # Boot splash with ESPHome logo
+  loading_screen: !include ../esphome-modular-lvgl-buttons/pages/loading.yaml
+  # WiFi credentials, MAC, IP, version info page
+  info_screen: !include ../esphome-modular-lvgl-buttons/pages/info.yaml
+
+# Stub for library components that hook into the per-minute time_update script
+script:
+  - id: time_update
+    then:
+      - lambda: |-
+          // No operation — extended by library packages if needed
+
+globals:
+  - id: wifi_connection
+    type: bool
+    restore_value: false
+    initial_value: "false"
+  - id: api_connection
+    type: bool
+    restore_value: false
+    initial_value: "false"

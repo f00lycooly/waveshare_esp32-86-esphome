@@ -1,0 +1,13 @@
+# ESPHome
+esphome/secrets.yaml
+esphome/.esphome/
+.esphome/
+**/.pioenvs/
+**/.piolibdeps/
+*.bin
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+__pycache__/

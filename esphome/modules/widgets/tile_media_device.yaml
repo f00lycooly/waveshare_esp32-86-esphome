@@ -1,0 +1,57 @@
+# ───────────────────────────────────────────────────────────────────────────
+# tile_media_device.yaml — Rooms-modal Sonos tile (page-media only).
+#
+# Staged multi-select grouping tile (HomeAutomation-4eq.20, was single-select in
+# 4eq.16). Tapping toggles the room in the staged_players vector (stage_toggle
+# script): first-staged becomes the group coordinator. Visual state is painted by
+# refresh_device_sel — coordinator = SOLID ep_blue + dark caption, member =
+# ep_blue OUTLINE + faint tint, unstaged = dark. A self-evident play/pause glyph
+# (driven by the .22 topology text_sensors) marks live playback, independent of
+# staging — so the modal needs no legend (4eq.24 redesign).
+#
+# Children are label/obj only (non-clickable) so the tile is immune to the LVGL v9
+# obj-clickable trap — see bd memory `lvgl-v9-obj-clickable-default`.
+#
+# The tile_id MUST match the ids refresh_device_sel + the topology sensors drive:
+#   ${tile_id} (button), ${tile_id}_cap (caption), ${tile_id}_dot (play/pause).
+#
+# Usage:
+#   - !include
+#       file: widgets/tile_media_device.yaml
+#       vars: {tile_id: m_living, col: 0, row: 0,
+#              caption: "Living Rm", player: media_player.living_room}
+#
+# vars: tile_id, col, row, caption, player
+# ───────────────────────────────────────────────────────────────────────────
+button:
+  id: ${tile_id}
+  styles: nav_tile
+  grid_cell_column_pos: ${col}
+  grid_cell_row_pos: ${row}
+  grid_cell_x_align: STRETCH
+  grid_cell_y_align: STRETCH
+  widgets:
+    # Live playback marker (top-left) — set by apply_room_status from the .22
+    # topology: play glyph = playing (green), pause glyph = paused (amber),
+    # hidden = idle. Self-evident, so the modal needs no legend.
+    - label:
+        id: ${tile_id}_dot
+        align: TOP_LEFT
+        x: 8
+        y: 6
+        text: $mdi_play
+        text_font: mdi_card_28
+        text_color: ep_green
+        hidden: true
+    # Caption — id'd so refresh_device_sel can flip it to dark on the solid
+    # coordinator tile.
+    - label:
+        id: ${tile_id}_cap
+        align: center
+        text: "${caption}"
+        text_font: nunito_20
+        text_color: white
+  on_click:
+    - script.execute:
+        id: stage_toggle
+        player: "${player}"

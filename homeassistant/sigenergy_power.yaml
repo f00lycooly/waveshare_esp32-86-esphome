@@ -1,0 +1,58 @@
+# Power-in-watts helpers — re-express the inverter's kW node powers as signed W
+# for the panel's gauges/Sankey, with consistent sign convention.
+# PRODUCES: sensor.battery_power_w, sensor.home_power_w, sensor.grid_power_w,
+#   sensor.pv_power_w, sensor.battery_max_charge_w, sensor.battery_max_discharge_w.
+# INPUTS — retarget these to your own inverter (each input sensor is flagged
+# "# CHANGE" on the line above its template):
+#   sensor.battery_power     (+ = charge / - = discharge, kW)
+#   sensor.home_power        (house consumption, kW)
+#   sensor.grid_power        (grid power, kW)
+#   sensor.pv_power          (PV generation, kW)
+#   number.battery_max_charge / number.battery_max_discharge  (rate limits, kW)
+
+- sensor:
+    - name: "Battery Power W"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      # CHANGE: sensor.battery_power -> your battery power (+chg/-dis)
+      state: >
+        {{ (states('sensor.battery_power') | float(0)) * -1000 }}
+
+    - name: "Home Power W"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      # CHANGE: sensor.home_power -> your house consumption
+      state: >
+        {{ (states('sensor.home_power') | float(0)) * 1000 }}
+
+    - name: "Grid Power W"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      # CHANGE: sensor.grid_power -> your grid power
+      state: >
+        {{ (states('sensor.grid_power') | float(0)) * -1000 }}
+
+    - name: "PV Power W"
+      unit_of_measurement: "W"
+      device_class: power
+      state_class: measurement
+      # CHANGE: sensor.pv_power -> your inverter PV power
+      state: >
+        {{ (states('sensor.pv_power') | float(0)) * 1000 }}
+
+    - name: "Battery Max Charge W"
+      unit_of_measurement: "W"
+      device_class: power
+      # CHANGE: number.battery_max_charge -> your max charge-rate limit
+      state: >
+        {{ (states('number.battery_max_charge') | float(0)) * 1000 }}
+
+    - name: "Battery Max Discharge W"
+      unit_of_measurement: "W"
+      device_class: power
+      # CHANGE: number.battery_max_discharge -> your max discharge-rate limit
+      state: >
+        {{ (states('number.battery_max_discharge') | float(0)) * 1000 }}

@@ -1,0 +1,44 @@
+# ───────────────────────────────────────────────────────────────────────────
+# tile_nav.yaml — reusable home-grid navigation tile.
+#
+# WRAPPER-FREE BY DESIGN. LVGL v9 (lv_obj.c:584) makes every `obj`/`container`
+# CLICKABLE by default, so any layout-wrapper obj nested inside a button steals
+# the tap and the button's on_click never fires (events don't bubble). This tile
+# puts its icon + caption labels DIRECTLY in the button (labels are non-clickable)
+# and runs the flex layout on the button itself — so it can never hit that trap.
+# See bd memory `lvgl-v9-obj-clickable-default`.
+#
+# Usage (in a page's widgets: list):
+#   - !include
+#       file: widgets/tile_nav.yaml
+#       vars: {tile_id: nav_lights, col: 0, row: 0,
+#              glyph: $mdi_lightbulb_group, glyph_color: yellow,
+#              caption: Lights, target: lights_page}
+#
+# vars: tile_id, col, row, glyph, glyph_color, caption, target
+# ───────────────────────────────────────────────────────────────────────────
+button:
+  id: ${tile_id}
+  styles: nav_tile
+  grid_cell_column_pos: ${col}
+  grid_cell_row_pos: ${row}
+  grid_cell_x_align: STRETCH
+  grid_cell_y_align: STRETCH
+  pad_all: 0
+  layout:
+    type: flex
+    flex_flow: COLUMN
+    flex_align_main: CENTER
+    flex_align_cross: CENTER
+    pad_row: 8
+  widgets:
+    - label:
+        text: ${glyph}
+        text_font: mdi_tile_64
+        text_color: ${glyph_color}
+    - label:
+        text: "${caption}"
+        text_font: nunito_24
+        text_color: white
+  on_click:
+    - lvgl.page.show: ${target}

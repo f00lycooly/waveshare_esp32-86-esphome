@@ -1,0 +1,90 @@
+# Spotify panel glue
+#
+# PRODUCES: sensor.spotify_playlists (favourite playlists) and
+# sensor.spotify_panel_devices (Spotify Connect devices), as plain HA
+# entities/attributes the panel can read.
+# INPUTS: retarget the media_player.spotify references marked "# CHANGE" to your
+# own SpotifyPlus media_player. Assumes the SpotifyPlus integration is installed.
+#
+# SpotifyPlus exposes playlists/devices via *services that return response data*,
+# not as static sensors. The panel (device picker, playlist roller) needs to read
+# them as plain HA entities/attributes, so
+# these trigger-based template sensors call the services on a schedule (+ HA start
+# + a manual `spotify_panel_refresh` event) and republish the results as:
+#   - structured list attributes  (names / uris / ids)  — for templating in HA
+#   - delimited string attributes (*_lines, newline-joined) — easy to split on the
+#     ESPHome side via a lambda.
+#
+# Refresh on demand from Developer Tools -> Actions:  event.fire  spotify_panel_refresh
+# (or just restart HA). If a service call errors (e.g. SpotifyPlus briefly
+# unavailable) the trigger aborts WITHOUT continue_on_error, so the sensor keeps
+# its last good value rather than being wiped to empty.
+#
+# NOTE for 4eq.17: ESPHome `homeassistant` text_sensor state is capped at 255
+# chars; 50 playlist URIs (~37 chars each) far exceed that. The ESPHome side will
+# need to page/cap or read a trimmed attribute — that's tracked in 4eq.17, not here.
+# This sensor deliberately holds the FULL list regardless.
+
+- trigger:
+    - platform: homeassistant
+      event: start
+    - platform: time_pattern
+      minutes: "/30"
+    - platform: event
+      event_type: spotify_panel_refresh
+  action:
+    - service: spotifyplus.get_playlist_favorites
+      data:
+        entity_id: media_player.spotify   # CHANGE: your Spotify media_player
+        limit_total: 50
+        sort_result: true
+      response_variable: pl
+  sensor:
+    - name: "Spotify Playlists"
+      unique_id: spotify_playlists
+      icon: mdi:playlist-music
+      # NB: use item access pl.result['items'] — pl.result.items would resolve to
+      # the dict's .items() METHOD in Jinja, not the "items" key (TypeError on len).
+      state: "{{ (pl.result['items'] if pl.result is defined else []) | count }}"
+      attributes:
+        names: "{{ (pl.result['items'] if pl.result is defined else []) | map(attribute='name') | list }}"
+        uris: "{{ (pl.result['items'] if pl.result is defined else []) | map(attribute='uri') | list }}"
+        names_lines: "{{ (pl.result['items'] if pl.result is defined else []) | map(attribute='name') | join('\n') }}"
+        uris_lines: "{{ (pl.result['items'] if pl.result is defined else []) | map(attribute='uri') | join('\n') }}"
+        # Panel-facing trimmed views: the ESPHome panel
+        # shows a 4x2 grid (8 favourites). ESPHome `homeassistant` text_sensor
+        # state/attributes are capped at 255 chars, so these publish ONLY the
+        # first 8, each name hard-truncated to 24 chars, and the playlist IDs as
+        # BARE base62 (the "spotify:playlist:" prefix is re-added on the panel) —
+        # 8 IDs (~22 chars) + newlines stays comfortably under 255.
+        names_8: >-
+          {{ ((pl.result['items'] if pl.result is defined else [])[:8]
+              | map(attribute='name') | map('truncate', 24, True, '') | list) | join('\n') }}
+        ids_8: >-
+          {{ ((pl.result['items'] if pl.result is defined else [])[:8]
+              | map(attribute='uri') | map('replace', 'spotify:playlist:', '') | list) | join('\n') }}
+
+- trigger:
+    - platform: homeassistant
+      event: start
+    - platform: time_pattern
+      minutes: "/5"
+    - platform: event
+      event_type: spotify_panel_refresh
+  action:
+    - service: spotifyplus.get_player_devices
+      data:
+        entity_id: media_player.spotify   # CHANGE: your Spotify media_player
+        refresh: true
+        sort_result: true
+      response_variable: dev
+  sensor:
+    - name: "Spotify Panel Devices"
+      unique_id: spotify_panel_devices
+      icon: mdi:speaker-multiple
+      state: "{{ (dev.result | default([], true)) | count }}"
+      attributes:
+        names: "{{ (dev.result | default([], true)) | map(attribute='name') | list }}"
+        ids: "{{ (dev.result | default([], true)) | map(attribute='id') | list }}"
+        names_lines: "{{ (dev.result | default([], true)) | map(attribute='name') | join('\n') }}"
+        ids_lines: "{{ (dev.result | default([], true)) | map(attribute='id') | join('\n') }}"

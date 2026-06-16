@@ -1,0 +1,34 @@
+# Front Room panel — display screenshot capture (dev/ops include)
+#
+# Lets us pull screenshots of the live UI (e.g. to verify the new BLE/Assist
+# service and layout work) without standing in front of the panel.
+#
+# NOTE on component choice: the generic `display_capture` component only
+# supports DisplayBuffer/RGB displays — NOT mipi_dsi or LVGL, which is what
+# this panel uses. We use lvgl_screenshot (originally dcgrove/esphome-lvgl-
+# screenshot), which grabs the LVGL frame directly.
+#
+# It's VENDORED into components/lvgl_screenshot/ rather than pulled from git:
+# the upstream is LVGL-v8-only and won't compile against ESPHome's LVGL v9.5
+# (2026.4.0+). Our local copy is ported to the v9 API — see the header comment
+# in components/lvgl_screenshot/lvgl_screenshot.cpp for the specifics.
+#
+# `path: components` resolves relative to the ESPHome config dir (via
+# CORE.relative_config_path) — i.e. esphome/components/ in the repo and
+# /config/components/ in the container (deployed by the Makefile `components`
+# target).
+#
+# Endpoint (own HTTP port, independent of web_server):
+#   GET http://<device-ip>:8080/screenshot   -> JPEG of the current screen
+#
+# Requires lvgl `buffer_size: 100%` so the whole frame is captured — already
+# set in ui-shared.yaml.
+---
+external_components:
+  - source:
+      type: local
+      path: components
+    components: [lvgl_screenshot]
+
+lvgl_screenshot:
+  port: 8080

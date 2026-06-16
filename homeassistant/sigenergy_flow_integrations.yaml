@@ -1,0 +1,57 @@
+# Riemann-sum integrations of the instantaneous flow-path power sensors
+# (sigenergy_flows.yaml) → cumulative energy in kWh.
+# PRODUCES: sensor.flow_pv_home_energy, ...pv_battery_energy, ...pv_grid_energy,
+#   ...battery_home_energy, ...battery_grid_energy, ...grid_home_energy,
+#   ...grid_battery_energy. Source is in W; unit_prefix k + unit_time h → kWh.
+# The daily utility_meters (sigenergy_flow_meters.yaml) reset these each midnight.
+# INPUTS: none to retarget — the `source:` entities are produced by sigenergy_flows.yaml.
+# Included from configuration.yaml as: sensor: !include sigenergy_flow_integrations.yaml
+
+- platform: integration
+  source: sensor.flow_pv_home
+  name: flow_pv_home_energy
+  unit_prefix: k
+  unit_time: h
+  method: left
+
+- platform: integration
+  source: sensor.flow_pv_battery
+  name: flow_pv_battery_energy
+  unit_prefix: k
+  unit_time: h
+  method: left
+
+- platform: integration
+  source: sensor.flow_pv_grid
+  name: flow_pv_grid_energy
+  unit_prefix: k
+  unit_time: h
+  method: left
+
+- platform: integration
+  source: sensor.flow_battery_home
+  name: flow_battery_home_energy
+  unit_prefix: k
+  unit_time: h
+  method: left
+
+- platform: integration
+  source: sensor.flow_battery_grid
+  name: flow_battery_grid_energy
+  unit_prefix: k
+  unit_time: h
+  method: left
+
+- platform: integration
+  source: sensor.flow_grid_battery
+  name: flow_grid_battery_energy
+  unit_prefix: k
+  unit_time: h
+  method: left
+
+- platform: integration
+  source: sensor.flow_grid_home
+  name: flow_grid_home_energy
+  unit_prefix: k
+  unit_time: h
+  method: left

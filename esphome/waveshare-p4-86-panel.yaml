@@ -1,0 +1,51 @@
+# ============================================================================
+#  Waveshare ESP32-P4 86-Panel — Home Assistant LVGL wall panel
+# ============================================================================
+#
+# Composition root. This file just stitches together focused packages; you
+# normally don't edit it. To point the panel at your own Home Assistant
+# entities, edit modules/user-config.yaml instead.
+#
+# Build:  esphome run waveshare-p4-86-panel.yaml
+# (You must create secrets.yaml first — see secrets.yaml.example.)
+#
+# Package order matters: ESPHome concatenates lists in declaration order, and
+# that order defines the swipe-navigation page order. page_main stays first
+# (it is the default boot page).
+# ----------------------------------------------------------------------------
+
+packages:
+  # User-editable entity/host mapping — START HERE.
+  user_config: !include modules/user-config.yaml
+
+  # Hardware contract for the Waveshare ESP32-P4-86-Panel (display, touch,
+  # audio, PSRAM, the hosted ESP32-C6 radio). rotation: "0" | "90" | "180" | "270".
+  hardware: !include
+    file: modules/hardware/p4-86-panel.yaml
+    vars:
+      rotation: "0"
+
+  # Device core: API, WiFi, logger, theme/fonts, and the shared library packages.
+  foundation: !include modules/ui-foundation.yaml
+
+  # Voice assistant + audio stack (micro wake word, on-device media player).
+  assist: !include modules/assist.yaml
+
+  # Optional dev/ops: HTTP screenshot endpoint (GET :8080/screenshot) for
+  # capturing the live LVGL UI remotely. Remove this line to drop it.
+  display_capture: !include modules/display-capture.yaml
+
+  # LVGL singletons + sensors shared across the pages below.
+  ui_shared: !include modules/ui-shared.yaml
+
+  # ---- Pages (this order = the left/right swipe order) ----
+  page_main:        !include modules/page-main.yaml        # home: clock, battery, media
+  page_energy:      !include modules/page-energy.yaml      # solar/battery/grid flow
+  page_climate:     !include modules/page-climate.yaml     # heat-pump / thermostat
+  page_lights:      !include modules/page-lights.yaml      # light toggles
+  page_security:    !include modules/page-security.yaml    # alarm panel
+  # Media backend (sensors, scripts, album-art image, Rooms/Playlists modals).
+  # Its UI lives on page_main, so it contributes no swipe page of its own.
+  page_media:       !include modules/page-media.yaml
+  # Terminal-style clock/weather screensaver, shown by on_idle.
+  page_screensaver: !include modules/page-screensaver.yaml
