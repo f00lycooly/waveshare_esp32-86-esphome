@@ -262,6 +262,11 @@ micro_wake_word:
       id: alexa
     - model: assets/microwakeword/okay_hal.json
       id: okay_hal
+    # GLaDOS persona wake word (pairs with the GLaDOS overlay persona). On-device
+    # path; the HA-side openWakeWord path is also available via the
+    # wake_word_engine_location select. Model: pham-tuan-binh/glados-respeaker (MIT).
+    - model: assets/microwakeword/glados.json
+      id: glados
     - model: assets/microwakeword/hey_luna.json
       id: hey_luna
     - model: assets/microwakeword/stop.json

@@ -1,0 +1,191 @@
+# ───────────────────────────────────────────────────────────────────────────
+# voice-overlay.yaml — persona voice-assistant phase overlay (HAL / GLaDOS)
+#
+# A full-screen LVGL top_layer overlay that surfaces the voice-assistant state
+# on screen. It READS assist.yaml's `voice_assistant_phase` int global (no shared
+# widget ids the other way), so assist.yaml stays LVGL-free and this file owns
+# all the presentation — same separation the page packages use.
+#
+# Two switchable personas (select.voice_persona, restored):
+#   HAL    — single glowing red 9000 eye (no housing).
+#   GLaDOS — white mechanical lens (housing + dark sclera) with a coloured iris;
+#            iris colour per phase maps to Portal cores (Curiosity orange /
+#            Intelligence blue / GLaDOS yellow / Anger red).
+#
+# The overlay is shown only during active phases (listening/thinking/replying/
+# error/timer) and auto-hides on return to idle/muted — that IS the dismiss.
+#
+# Phase ints mirror assist.yaml substitutions (kept in sync by hand):
+#   1 idle · 2 listening · 3 thinking · 4 replying · 10 not_ready · 11 error
+#   12 muted · 20 timer_finished · 30 timer_finishing
+# ───────────────────────────────────────────────────────────────────────────
+
+# Runtime persona switch (mirrors the wake_word_engine_location select pattern).
+select:
+  - platform: template
+    name: "Voice Persona"
+    id: voice_persona_select
+    icon: mdi:robot
+    optimistic: true
+    restore_value: true
+    options:
+      - "HAL"
+      - "GLaDOS"
+    initial_option: "HAL"
+
+globals:
+  # Last rendered phase (-1 forces a full repaint on first tick).
+  - id: va_last_phase
+    type: int
+    restore_value: false
+    initial_value: "-1"
+  # Pulse counter (advances every render tick) for the breathing glow.
+  - id: va_tick
+    type: int
+    restore_value: false
+    initial_value: "0"
+
+lvgl:
+  top_layer:
+    widgets:
+      - obj:
+          id: va_overlay
+          hidden: true
+          x: 0
+          y: 0
+          width: 100%
+          height: 100%
+          radius: 0
+          border_width: 0
+          pad_all: 0
+          scrollable: false
+          bg_color: 0x05060A
+          bg_opa: 96%
+          widgets:
+            # GLaDOS mechanical lens housing (hidden for HAL).
+            - obj:
+                id: va_housing
+                hidden: true
+                clickable: false
+                align: CENTER
+                width: 250
+                height: 250
+                radius: 9999
+                border_width: 0
+                pad_all: 0
+                scrollable: false
+                bg_color: 0xF4EFE6
+                bg_opa: cover
+            # GLaDOS dark sclera (hidden for HAL).
+            - obj:
+                id: va_sclera
+                hidden: true
+                clickable: false
+                align: CENTER
+                width: 150
+                height: 150
+                radius: 9999
+                border_width: 0
+                pad_all: 0
+                scrollable: false
+                bg_color: 0x15110C
+                bg_opa: cover
+            # The glowing core: HAL's red orb, or GLaDOS's iris. Colour, size and
+            # the breathing shadow are all driven by va_render.
+            - obj:
+                id: va_iris
+                clickable: false
+                align: CENTER
+                width: 210
+                height: 210
+                radius: 9999
+                border_width: 0
+                pad_all: 0
+                scrollable: false
+                bg_color: 0xE51E18
+                bg_opa: cover
+                shadow_color: 0xE51E18
+                shadow_width: 40
+                shadow_spread: 6
+                shadow_opa: 100%
+            # Phase caption.
+            - label:
+                id: va_eye_label
+                clickable: false
+                align: CENTER
+                y: 210
+                text: ""
+                text_font: oswald_24
+                text_color: 0xE51E18
+
+# 100ms repaint: cheap show/hide + colour swap on phase change, plus the pulse.
+interval:
+  - interval: 100ms
+    then:
+      - script.execute: va_render
+
+script:
+  - id: va_render
+    then:
+      - lambda: |-
+          const int ph = id(voice_assistant_phase);
+          const bool glados = (id(voice_persona_select).current_option() == "GLaDOS");
+          // Active (overlay-visible) phases only.
+          const bool show = (ph == 2 || ph == 3 || ph == 4 || ph == 11 || ph == 20 || ph == 30);
+          id(va_tick) += 1;
+
+          if (!show) {
+            if (id(va_last_phase) != ph) {
+              lv_obj_add_flag(id(va_overlay), LV_OBJ_FLAG_HIDDEN);
+              id(va_last_phase) = ph;
+            }
+            return;
+          }
+
+          // Phase → colour + caption (persona-specific palette).
+          uint32_t col; const char* txt;
+          if (glados) {
+            switch (ph) {
+              case 2:  col = 0xFF7A18; txt = "LISTENING";  break;  // Curiosity · orange
+              case 3:  col = 0x2F9FFF; txt = "THINKING";   break;  // Intelligence · blue
+              case 4:  col = 0xFFD42E; txt = "RESPONDING"; break;  // GLaDOS · yellow
+              case 11: col = 0xFF3B30; txt = "ERROR";      break;  // Anger · red
+              default: col = 0xFFD42E; txt = "TIMER";      break;  // 20/30 · yellow
+            }
+          } else {
+            switch (ph) {
+              case 2:  col = 0xE51E18; txt = "LISTENING";  break;  // HAL red
+              case 3:  col = 0xF5A623; txt = "THINKING";   break;  // amber
+              case 4:  col = 0x01B4DE; txt = "RESPONDING"; break;  // cyan
+              case 11: col = 0xFF3B30; txt = "ERROR";      break;
+              default: col = 0xE51E18; txt = "TIMER";      break;  // 20/30
+            }
+          }
+          const lv_color_t c = lv_color_hex(col);
+
+          // Repaint chrome/colour/label only when the phase actually changed.
+          if (id(va_last_phase) != ph) {
+            lv_obj_clear_flag(id(va_overlay), LV_OBJ_FLAG_HIDDEN);
+            if (glados) {
+              lv_obj_clear_flag(id(va_housing), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_clear_flag(id(va_sclera),  LV_OBJ_FLAG_HIDDEN);
+              lv_obj_set_size(id(va_iris), 96, 96);
+            } else {
+              lv_obj_add_flag(id(va_housing), LV_OBJ_FLAG_HIDDEN);
+              lv_obj_add_flag(id(va_sclera),  LV_OBJ_FLAG_HIDDEN);
+              lv_obj_set_size(id(va_iris), 210, 210);
+            }
+            lv_obj_set_style_bg_color(id(va_iris), c, 0);
+            lv_obj_set_style_shadow_color(id(va_iris), c, 0);
+            lv_obj_set_style_text_color(id(va_eye_label), c, 0);
+            lv_label_set_text(id(va_eye_label), txt);
+            id(va_last_phase) = ph;
+          }
+
+          // Breathing glow: triangle wave on the shadow width. Error/timer pulse
+          // roughly 3x faster to read as urgent.
+          const int period = (ph == 11 || ph == 20 || ph == 30) ? 6 : 16;
+          const int half = period / 2;
+          const int p = id(va_tick) % period;
+          const float br = (p < half) ? (float)p / half : (float)(period - p) / half;
+          lv_obj_set_style_shadow_width(id(va_iris), 20 + (int)(40.0f * br), 0);

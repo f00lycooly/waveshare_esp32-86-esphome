@@ -1,7 +1,7 @@
 # ───────────────────────────────────────────────────────────────────────────
 # tile_toggle.yaml — reusable entity-toggle tile (icon + caption, taps call a
-# Home Assistant action). WRAPPER-FREE for the same LVGL v9 reason as tile_nav
-# (see that file and bd memory `lvgl-v9-obj-clickable-default`).
+# Home Assistant action). WRAPPER-FREE for LVGL v9 reasons (an obj is clickable
+# by default, so wrapping a button in an obj would swallow the tap).
 #
 # The icon label carries `icon_id` so a text_sensor on_value lambda can recolour
 # it on state change; the button carries `tile_id` so the same lambda can toggle

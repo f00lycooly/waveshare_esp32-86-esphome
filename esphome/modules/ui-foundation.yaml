@@ -5,8 +5,10 @@
 #   - Project metadata (name, friendly_name, encryption)
 #   - Connectivity (api, wifi, captive_portal) + connectivity globals
 #   - Logger, image defaults, HA time source
-#   - The six library package includes (ota, sensors_base, theme, popup,
-#     loading, info) and the time_update hook stub
+#   - Five library package includes (ota, sensors_base, theme, popup, loading)
+#     and the time_update hook stub. The info page is an lvgl page whose include
+#     position sets its swipe-ring slot, so it is included by the device file
+#     (waveshare-p4-86-panel.yaml) last, not here.
 #   - Theme/font substitutions consumed by the library packages
 # It composes with assist.yaml (voice/audio stack, on_boot) and the per-page
 # packages (ui-shared.yaml + page-*.yaml) — no LVGL pages or voice stack here.
@@ -100,10 +102,13 @@ packages:
   theme: !include ../esphome-modular-lvgl-buttons/common/theme/index.yaml
   # Popup overlay infrastructure (needed for light/climate detail pages)
   popup_system: !include ../esphome-modular-lvgl-buttons/ui/popup/popup_system.yaml
-  # Boot splash with ESPHome logo
+  # Boot splash with ESPHome logo. (loading_page is a top_layer overlay, not an
+  # lvgl page, so its include position does not affect swipe-page order.)
   loading_screen: !include ../esphome-modular-lvgl-buttons/pages/loading.yaml
-  # WiFi credentials, MAC, IP, version info page
-  info_screen: !include ../esphome-modular-lvgl-buttons/pages/info.yaml
+  # NOTE: info_screen (the WiFi/MAC/IP/version page) is an lvgl *page*, so its
+  # include position sets its slot in the swipe ring. It is intentionally NOT
+  # included here — the device file includes it last, after the page packages,
+  # so page_main stays first and info sits at the end of the swipe order.
 
 # Stub for library components that hook into the per-minute time_update script
 script:

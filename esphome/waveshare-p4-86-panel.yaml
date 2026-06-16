@@ -38,6 +38,11 @@ packages:
   # LVGL singletons + sensors shared across the pages below.
   ui_shared: !include modules/ui-shared.yaml
 
+  # Voice-assistant phase overlay (top_layer): a full-screen eye driven by
+  # voice_assistant_phase, with switchable HAL / GLaDOS personas
+  # (select.voice_persona). After ui_shared so its fonts (oswald_24) resolve.
+  voice_overlay: !include modules/voice-overlay.yaml
+
   # ---- Pages (this order = the left/right swipe order) ----
   page_main:        !include modules/page-main.yaml        # home: clock, battery, media
   page_energy:      !include modules/page-energy.yaml      # solar/battery/grid flow
@@ -47,5 +52,10 @@ packages:
   # Media backend (sensors, scripts, album-art image, Rooms/Playlists modals).
   # Its UI lives on page_main, so it contributes no swipe page of its own.
   page_media:       !include modules/page-media.yaml
-  # Terminal-style clock/weather screensaver, shown by on_idle.
+  # Terminal-style clock/weather screensaver, shown by on_idle. Declared with
+  # skip:true so it is never reachable by a swipe (idle-only).
   page_screensaver: !include modules/page-screensaver.yaml
+  # info_screen is the library's WiFi/MAC/IP/version page — an lvgl page (with
+  # swipe nav), so it is included LAST to sit at the end of the swipe ring and
+  # keep page_main first. Also reached directly via the settings cog on main.
+  info_screen:      !include esphome-modular-lvgl-buttons/pages/info.yaml

@@ -121,6 +121,9 @@ text_sensor:
 lvgl:
   pages:
     - id: screensaver_page
+      # skip: excluded from lvgl.page.next/previous so a swipe never lands here.
+      # It is shown only by on_idle (ui-shared.yaml) and dismissed by tap → main.
+      skip: true
       bg_color: 0x0A0C10
       widgets:
         # Whole page = a tap-to-wake button carrying the vertical gradient.
