@@ -10,7 +10,14 @@
 #include "freertos/semphr.h"
 #include "lvgl.h"
 
+#include <map>
+#include <string>
+
 namespace esphome {
+namespace lvgl {
+class LvPageType;  // fwd-decl; full def pulled into the .cpp only
+}  // namespace lvgl
+
 namespace lvgl_screenshot {
 
 class LvglScreenshot : public Component {
@@ -19,10 +26,27 @@ class LvglScreenshot : public Component {
   void loop() override;
   float get_setup_priority() const override { return setup_priority::LATE; }
   void set_port(uint16_t port) { this->port_ = port; }
+  void set_settle_ms(uint32_t ms) { this->settle_ms_ = ms; }
+  void set_restore_page(bool restore) { this->restore_page_ = restore; }
+  void register_page(const std::string &name, lvgl::LvPageType *page) { this->pages_[name] = page; }
 
  protected:
+  // Capture proceeds as a small state machine driven from loop() so we can let
+  // LVGL keep running (lv_timer_handler) between switching pages and capturing.
+  enum CaptureState { CAP_IDLE, CAP_SETTLING };
+
   uint16_t port_{8080};
   httpd_handle_t server_{nullptr};
+
+  // Named-page navigation (?page=<name>)
+  std::map<std::string, lvgl::LvPageType *> pages_;
+  uint32_t settle_ms_{300};
+  bool restore_page_{true};
+  std::string requested_page_;  // set by HTTP handler, consumed by loop()
+  CaptureState capture_state_{CAP_IDLE};
+  uint32_t settle_until_{0};
+  size_t saved_page_index_{0};
+  bool page_was_switched_{false};
 
   // Semaphore pair for synchronising HTTP handler <-> main loop
   SemaphoreHandle_t capture_requested_{nullptr};

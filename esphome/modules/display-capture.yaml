@@ -1,7 +1,7 @@
-# Front Room panel — display screenshot capture (dev/ops include)
+# Display screenshot capture (dev/ops include)
 #
-# Lets us pull screenshots of the live UI (e.g. to verify the new BLE/Assist
-# service and layout work) without standing in front of the panel.
+# Lets you pull screenshots of the live UI over HTTP without standing in front
+# of the panel.
 #
 # NOTE on component choice: the generic `display_capture` component only
 # supports DisplayBuffer/RGB displays — NOT mipi_dsi or LVGL, which is what
@@ -15,15 +15,31 @@
 #
 # `path: components` resolves relative to the ESPHome config dir (via
 # CORE.relative_config_path) — i.e. esphome/components/ in the repo and
-# /config/components/ in the container (deployed by the Makefile `components`
-# target).
+# /config/components/ in the container.
 #
 # Endpoint (own HTTP port, independent of web_server):
-#   GET http://<device-ip>:8080/screenshot   -> JPEG of the current screen
+#   GET http://<device-ip>:8080/screenshot              -> JPEG of the current screen
+#   GET http://<device-ip>:8080/screenshot?page=<name>  -> switch to a page, then capture
 #
-# Requires lvgl `buffer_size: 100%` so the whole frame is captured — already
-# set in ui-shared.yaml.
+# Capture uses lv_snapshot_take() to render the active screen on demand, so it
+# works regardless of LVGL's render mode (this panel runs PARTIAL — the active
+# render buffer only holds the last dirty region, not the whole frame). That
+# requires LV_USE_SNAPSHOT.
+#
+# ESPHome generates its OWN lv_conf.h and does NOT enable Kconfig for lvgl
+# (LV_KCONFIG_PRESENT is gated on CONFIG_LV_COLOR_DEPTH, which ESPHome never
+# sets), so CONFIG_LV_USE_SNAPSHOT=y via sdkconfig_options is ignored. ESPHome's
+# lv_conf.h also omits LV_USE_SNAPSHOT entirely, so it defaults to 0. The one
+# lever that wins is a global -D: lv_conf_internal.h guards the symbol with
+# `#ifndef LV_USE_SNAPSHOT`, so a command-line definition takes precedence over
+# the built-in default. build_flags apply to every TU including the lvgl
+# managed component, which is where lv_snapshot.c lives.
 ---
+esphome:
+  platformio_options:
+    build_flags:
+      - "-DLV_USE_SNAPSHOT=1"
+
 external_components:
   - source:
       type: local
@@ -32,3 +48,22 @@ external_components:
 
 lvgl_screenshot:
   port: 8080
+  # GET /screenshot?page=<name> switches the panel to that page, lets it settle,
+  # captures, then restores the page the user was on. Without ?page it captures
+  # the live screen. Names are the query keys; page: is the LVGL page id.
+  # Adjust this list to match the pages your device actually includes.
+  pages:
+    - name: main
+      page: main_page
+    - name: energy
+      page: energy_page
+    - name: climate
+      page: climate_page
+    - name: lights
+      page: lights_page
+    - name: security
+      page: security_page
+    - name: screensaver
+      page: screensaver_page
+    - name: info
+      page: info_screen

@@ -7,6 +7,8 @@
 #ifdef USE_ESP_IDF
 
 #include "esphome/core/log.h"
+#include "esphome/core/hal.h"
+#include "esphome/components/lvgl/lvgl_esphome.h"
 #include "esp_heap_caps.h"
 #include <algorithm>
 
@@ -15,24 +17,30 @@
 // written for LVGL v8). ESPHome 2026.4.0 moved to LVGL 9.5; this file is the
 // HomeAutomation-local fork that builds against it.
 //
-// What changed vs. the v8 original:
-//   * lv_disp_t / disp->driver->draw_buf->buf_act is gone — lv_display_t is
-//     opaque in v9. The active render buffer now comes from the public getter
-//     lv_display_get_buf_active(), which returns an lv_draw_buf_t (.data +
-//     .header.{w,h,stride}).
-//   * lv_color_t is RGB888 in v9 ({blue,green,red}) and has no .ch union, but
-//     the BUFFER is still RGB565 (LV_COLOR_DEPTH=16). So we read raw uint16_t
-//     pixels and extract the 5/6/5 fields ourselves instead of casting to
-//     lv_color_t.
-//   * v9 stores the render buffer as native little-endian RGB565; the panel
-//     byte-swap happens in the mipi_dsi flush path, not in the buffer. If a
-//     capture ever comes out with red/blue swapped on-device, flip
-//     LVGL_SS_SWAP_BYTES to 1 below — that's the one thing I couldn't verify
-//     without flashing.
+// Capture strategy — lv_snapshot (NOT lv_display_get_buf_active):
+//   The original v8 code read the display's active render buffer directly.
+//   That only works when LVGL is in FULL render mode (one screen-sized buffer
+//   that always holds the whole frame). This panel runs LVGL in PARTIAL mode
+//   (ESPHome default — `buffer_size: 100%` sizes the buffer but does NOT set
+//   the render mode), so the active buffer only ever holds the last redrawn
+//   dirty region, laid out at the dirty area's width. Reading it as a full
+//   720-wide frame produced a half-width-ghosted clock over stale-PSRAM noise.
+//
+//   Instead we ask LVGL to render the active screen into a fresh buffer on
+//   demand via lv_snapshot_take(lv_screen_active(), RGB888). This is render-
+//   mode-independent and always yields the complete current frame. It requires
+//   LV_USE_SNAPSHOT=1 — enabled via CONFIG_LV_USE_SNAPSHOT=y in the device's
+//   sdkconfig_options (see modules/display-capture.yaml). Must be called from
+//   the LVGL/main task — we do, from loop() via the capture semaphore.
+//
+//   RGB888 byte order: LVGL stores LV_COLOR_FORMAT_RGB888 as {blue,green,red}
+//   in memory; stb's JPEG writer wants R,G,B. We swap channels during the
+//   repack. If a capture ever comes out red/blue swapped, flip
+//   LVGL_SS_SWAP_RB below.
 // ---------------------------------------------------------------------------
 
-// Set to 1 if on-device captures show byte-swapped colour (see note above).
-#define LVGL_SS_SWAP_BYTES 0
+// Set to 0 if on-device captures show red/blue swapped (see note above).
+#define LVGL_SS_SWAP_RB 1
 
 namespace esphome {
 namespace lvgl_screenshot {
@@ -141,13 +149,62 @@ void LvglScreenshot::start_server_() {
 }
 
 // ---------------------------------------------------------------------------
-// loop()  –  called from the ESPHome main task; safe to touch LVGL here
+// loop()  –  called from the ESPHome main task; safe to touch LVGL here.
+//
+// Runs as a 2-state machine so that, when a ?page= switch is requested, we can
+// hand control back to the main loop (and thus LVGL's own timer handler) while
+// the new page settles, instead of blocking here with a delay.
 // ---------------------------------------------------------------------------
 void LvglScreenshot::loop() {
-  // Non-blocking check: did the HTTP handler signal a capture request?
-  if (xSemaphoreTake(this->capture_requested_, 0) == pdTRUE) {
-    this->do_capture_();
-    xSemaphoreGive(this->capture_done_);
+  switch (this->capture_state_) {
+    case CAP_IDLE: {
+      // Non-blocking check: did the HTTP handler signal a capture request?
+      if (xSemaphoreTake(this->capture_requested_, 0) != pdTRUE)
+        return;
+
+      this->page_was_switched_ = false;
+      uint32_t settle = 0;
+
+      if (!this->requested_page_.empty()) {
+        auto it = this->pages_.find(this->requested_page_);
+        if (it != this->pages_.end() && it->second != nullptr) {
+          lvgl::LvPageType *page = it->second;
+          lvgl::LvglComponent *lv = page->get_parent();
+          this->saved_page_index_ = lv->get_current_page();
+          // Switch instantly (no animation) so the frame is coherent quickly.
+          lv->show_page(page->index, LV_SCR_LOAD_ANIM_NONE, 0);
+          this->page_was_switched_ = true;
+          settle = this->settle_ms_;  // give layout + on_load handlers time
+        } else {
+          ESP_LOGW(TAG, "Unknown screenshot page '%s' — capturing current screen",
+                   this->requested_page_.c_str());
+        }
+      }
+
+      this->settle_until_ = millis() + settle;
+      this->capture_state_ = CAP_SETTLING;
+      return;
+    }
+
+    case CAP_SETTLING: {
+      // Keep yielding to the main loop until the settle window elapses.
+      if ((int32_t) (millis() - this->settle_until_) < 0)
+        return;
+
+      this->do_capture_();
+
+      // Return the panel to wherever the user had it.
+      if (this->page_was_switched_ && this->restore_page_) {
+        auto it = this->pages_.find(this->requested_page_);
+        if (it != this->pages_.end() && it->second != nullptr)
+          it->second->get_parent()->show_page(this->saved_page_index_, LV_SCR_LOAD_ANIM_NONE, 0);
+      }
+
+      this->requested_page_.clear();
+      this->capture_state_ = CAP_IDLE;
+      xSemaphoreGive(this->capture_done_);
+      return;
+    }
   }
 }
 
@@ -155,49 +212,54 @@ void LvglScreenshot::loop() {
 // do_capture_()  –  read LVGL's active RGB565 buffer, convert to RGB888, JPEG
 // ---------------------------------------------------------------------------
 void LvglScreenshot::do_capture_() {
-  lv_display_t *disp = lv_display_get_default();
-  if (!disp) {
-    ESP_LOGE(TAG, "No LVGL display");
+  lv_obj_t *screen = lv_screen_active();
+  if (!screen) {
+    ESP_LOGE(TAG, "No active LVGL screen");
     this->jpeg_size_ = 0;
     return;
   }
 
-  // v9: the active render buffer is an lv_draw_buf_t (data + header). With
-  // lvgl `buffer_size: 100%` this is a full-screen RGB565 buffer.
-  lv_draw_buf_t *db = lv_display_get_buf_active(disp);
-  if (!db || !db->data) {
-    ESP_LOGE(TAG, "LVGL framebuffer not available (need lvgl buffer_size: 100%%)");
+  // Render the whole active screen into a fresh RGB888 draw buffer. This is
+  // independent of the display's render mode (PARTIAL vs FULL), so it captures
+  // the complete current frame even though LVGL only keeps a dirty-region
+  // buffer live. The allocation goes to PSRAM via ESPHome's draw_buf handlers.
+  lv_draw_buf_t *snap = lv_snapshot_take(screen, LV_COLOR_FORMAT_RGB888);
+  if (!snap || !snap->data) {
+    ESP_LOGE(TAG, "lv_snapshot_take failed (is CONFIG_LV_USE_SNAPSHOT=y set?)");
     this->jpeg_size_ = 0;
+    if (snap)
+      lv_draw_buf_destroy(snap);
     return;
   }
 
-  uint32_t width = (uint32_t) lv_display_get_horizontal_resolution(disp);
-  uint32_t height = (uint32_t) lv_display_get_vertical_resolution(disp);
-
-  // Row stride in bytes (v9 may pad rows for alignment); fall back to width*2.
-  uint32_t stride = db->header.stride ? db->header.stride : (width * 2u);
+  uint32_t width = snap->header.w;
+  uint32_t height = snap->header.h;
+  // Snapshot stride is in bytes and may be padded for alignment; honour it.
+  uint32_t stride = snap->header.stride ? snap->header.stride : (width * 3u);
 
   // ------------------------------------------------------------------
-  // Convert RGB565 → RGB888 into rgb_buf_ (row-major, top-down)
+  // Repack RGB888 (LVGL B,G,R order, possibly row-padded) into the tightly
+  // packed R,G,B buffer stb expects (no per-row padding, no stride param).
   // ------------------------------------------------------------------
   for (uint32_t y = 0; y < height; y++) {
-    const uint16_t *src = (const uint16_t *) (db->data + (size_t) y * stride);
+    const uint8_t *src = snap->data + (size_t) y * stride;
     uint8_t *row = this->rgb_buf_ + (size_t) y * width * 3u;
     for (uint32_t x = 0; x < width; x++) {
-      uint16_t px = src[x];
-#if LVGL_SS_SWAP_BYTES
-      px = (uint16_t) __builtin_bswap16(px);
+      const uint8_t *px = src + x * 3u;
+#if LVGL_SS_SWAP_RB
+      row[x * 3 + 0] = px[2];  // R
+      row[x * 3 + 1] = px[1];  // G
+      row[x * 3 + 2] = px[0];  // B
+#else
+      row[x * 3 + 0] = px[0];
+      row[x * 3 + 1] = px[1];
+      row[x * 3 + 2] = px[2];
 #endif
-      uint8_t r5 = (uint8_t) ((px >> 11) & 0x1F);
-      uint8_t g6 = (uint8_t) ((px >> 5) & 0x3F);
-      uint8_t b5 = (uint8_t) (px & 0x1F);
-
-      // Scale 5-bit → 8-bit and 6-bit → 8-bit by replicating the MSBs
-      row[x * 3 + 0] = (uint8_t) ((r5 << 3) | (r5 >> 2));
-      row[x * 3 + 1] = (uint8_t) ((g6 << 2) | (g6 >> 4));
-      row[x * 3 + 2] = (uint8_t) ((b5 << 3) | (b5 >> 2));
     }
   }
+
+  // Done with the snapshot buffer — free before encoding to cap peak PSRAM use.
+  lv_draw_buf_destroy(snap);
 
   // ------------------------------------------------------------------
   // Encode RGB888 → JPEG via stb_image_write (quality 80)
@@ -229,11 +291,25 @@ esp_err_t LvglScreenshot::handle_screenshot_(httpd_req_t *req) {
   }
   self->in_progress_ = true;
 
+  // Optional ?page=<name> — switch the panel to that page before capturing.
+  self->requested_page_.clear();
+  size_t qlen = httpd_req_get_url_query_len(req);
+  if (qlen > 0 && qlen < 256) {
+    char query[256];
+    if (httpd_req_get_url_query_str(req, query, sizeof(query)) == ESP_OK) {
+      char val[64];
+      if (httpd_query_key_value(query, "page", val, sizeof(val)) == ESP_OK)
+        self->requested_page_ = val;
+    }
+  }
+
   // Ask the main loop to do the capture
   xSemaphoreGive(self->capture_requested_);
 
-  // Wait up to 3 s for the main loop to finish (it runs at ~60 Hz so ~16 ms max wait)
-  if (xSemaphoreTake(self->capture_done_, pdMS_TO_TICKS(3000)) != pdTRUE) {
+  // Wait for the main loop to finish: a normal capture is ~16 ms, but a ?page=
+  // switch adds the settle window, so budget for that plus headroom.
+  uint32_t wait_ms = 3000u + self->settle_ms_;
+  if (xSemaphoreTake(self->capture_done_, pdMS_TO_TICKS(wait_ms)) != pdTRUE) {
     self->in_progress_ = false;
     httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "Capture timed out");
     return ESP_FAIL;
